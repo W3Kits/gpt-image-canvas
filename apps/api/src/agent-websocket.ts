@@ -4,9 +4,15 @@ import type {
   AgentClientMessage,
   AgentClientMessageType,
   AgentErrorEvent,
-  AgentServerEvent
+  AgentServerEvent,
+  GenerationPlan
 } from "./contracts.js";
 import { getUsableAgentLlmConfig } from "./agent-config.js";
+import {
+  executeGenerationPlan,
+  isExecutableGenerationPlan,
+  type StoredAgentGenerationPlan
+} from "./agent-executor.js";
 import { createGenerationPlan } from "./agent-planner.js";
 
 const OPEN_READY_STATE = 1;
@@ -34,6 +40,7 @@ interface ActiveAgentRun {
 interface AgentSocketSession {
   connectionId: string;
   activeRun?: ActiveAgentRun;
+  plans: Map<string, StoredAgentGenerationPlan>;
 }
 
 interface ParsedMessage {
@@ -51,7 +58,8 @@ const sessions = new Map<string, AgentSocketSession>();
 
 export function createAgentWebSocketEvents(): WSEvents {
   const session: AgentSocketSession = {
-    connectionId: randomUUID()
+    connectionId: randomUUID(),
+    plans: new Map()
   };
 
   return {
@@ -169,6 +177,41 @@ function handleAgentWorkMessage(message: AgentClientMessage, ws: WSContext, sess
     return;
   }
 
+  if (message.type === "execute_plan" || message.type === "retry_failed") {
+    if (session.activeRun) {
+      sendError(ws, {
+        code: "agent_run_in_progress",
+        message: "An Agent run is already in progress for this connection.",
+        requestId: message.requestId,
+        runId: session.activeRun.id,
+        recoverable: true
+      });
+      return;
+    }
+
+    const storedPlan = resolveStoredPlanForExecution(session, message);
+    if (!storedPlan) {
+      sendError(ws, {
+        code: "unknown_agent_plan",
+        message: "The requested Agent plan is not available. Regenerate the plan or execute it from the canvas node payload.",
+        requestId: message.requestId,
+        runId: message.runId,
+        recoverable: true
+      });
+      return;
+    }
+
+    const runId = message.runId ?? randomUUID();
+    const activeRun: ActiveAgentRun = {
+      id: runId,
+      controller: new AbortController(),
+      cancelled: false
+    };
+    session.activeRun = activeRun;
+    void handleAgentPlanExecutionMessage(message, ws, session, activeRun, storedPlan);
+    return;
+  }
+
   sendError(ws, {
     code: "agent_work_unavailable",
     message: "This Agent action is not available in this build yet.",
@@ -226,6 +269,11 @@ async function handleAgentPlanMessage(
     return;
   }
 
+  session.plans.set(result.plan.id, {
+    plan: result.plan,
+    selectedReferences: message.selectedReferences ?? []
+  });
+
   sendEvent(ws, {
     type: "plan_created",
     requestId: message.requestId,
@@ -240,6 +288,101 @@ async function handleAgentPlanMessage(
     status: "succeeded",
     timestamp: new Date().toISOString()
   });
+}
+
+async function handleAgentPlanExecutionMessage(
+  message: Extract<AgentClientMessage, { type: "execute_plan" | "retry_failed" }>,
+  ws: WSContext,
+  session: AgentSocketSession,
+  activeRun: ActiveAgentRun,
+  storedPlan: StoredAgentGenerationPlan
+): Promise<void> {
+  let result: Awaited<ReturnType<typeof executeGenerationPlan>>;
+  try {
+    result = await executeGenerationPlan({
+      ...storedPlan,
+      mode: message.type === "execute_plan" ? "execute" : "retry_failed",
+      requestId: message.requestId,
+      runId: activeRun.id,
+      signal: activeRun.controller.signal,
+      isRunActive: () => session.activeRun?.id === activeRun.id && !activeRun.cancelled,
+      sendEvent: (event) => sendEvent(ws, event)
+    });
+  } catch (error) {
+    if (activeRun.controller.signal.aborted || activeRun.cancelled || session.activeRun?.id !== activeRun.id) {
+      return;
+    }
+
+    const messageText = error instanceof Error && error.message ? error.message : "Agent plan execution failed.";
+    sendError(ws, {
+      code: "agent_execution_failed",
+      message: messageText,
+      requestId: message.requestId,
+      runId: activeRun.id,
+      recoverable: true
+    });
+    sendEvent(ws, {
+      type: "run_done",
+      requestId: message.requestId,
+      runId: activeRun.id,
+      status: "failed",
+      timestamp: new Date().toISOString()
+    });
+    session.activeRun = undefined;
+    return;
+  }
+
+  if (session.activeRun?.id !== activeRun.id || activeRun.cancelled) {
+    return;
+  }
+
+  session.activeRun = undefined;
+  session.plans.set(result.plan.id, {
+    plan: result.plan,
+    selectedReferences: storedPlan.selectedReferences
+  });
+  sendEvent(ws, {
+    type: "run_done",
+    requestId: message.requestId,
+    runId: activeRun.id,
+    status: result.status,
+    timestamp: new Date().toISOString()
+  });
+}
+
+function resolveStoredPlanForExecution(
+  session: AgentSocketSession,
+  message: Extract<AgentClientMessage, { type: "execute_plan" | "retry_failed" }>
+): StoredAgentGenerationPlan | undefined {
+  const messagePlan = isExecutableGenerationPlan(message.plan) && message.plan.id === message.planId ? message.plan : undefined;
+  const storedPlan = session.plans.get(message.planId);
+
+  if (!messagePlan) {
+    return storedPlan;
+  }
+
+  return {
+    plan: messagePlan,
+    selectedReferences: storedPlan?.selectedReferences ?? selectedReferencesFromPlan(messagePlan)
+  };
+}
+
+function selectedReferencesFromPlan(plan: GenerationPlan): StoredAgentGenerationPlan["selectedReferences"] {
+  const selectedReferences = new Map<string, StoredAgentGenerationPlan["selectedReferences"][number]>();
+  for (const job of plan.jobs) {
+    for (const reference of job.references) {
+      if (reference.kind !== "selected_canvas_image" || !reference.assetId) {
+        continue;
+      }
+      selectedReferences.set(reference.assetId, {
+        id: reference.assetId,
+        assetId: reference.assetId,
+        label: reference.label
+      });
+    }
+  }
+
+  return [...selectedReferences.values()];
 }
 
 function cancelActiveRun(

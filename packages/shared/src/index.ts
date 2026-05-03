@@ -580,11 +580,13 @@ export interface AgentRevisePlanClientMessage extends AgentBaseClientMessage {
 export interface AgentExecutePlanClientMessage extends AgentBaseClientMessage {
   type: "execute_plan";
   planId: string;
+  plan?: GenerationPlan;
 }
 
 export interface AgentRetryFailedClientMessage extends AgentBaseClientMessage {
   type: "retry_failed";
   planId: string;
+  plan?: GenerationPlan;
 }
 
 export type AgentClientMessage =
@@ -650,32 +652,41 @@ export interface AgentPlanUpdatedEvent extends AgentBaseServerEvent {
 
 export interface AgentJobStartedEvent extends AgentBaseServerEvent {
   type: "job_started";
+  planId: string;
   jobId: string;
 }
 
 export interface AgentJobCompletedEvent extends AgentBaseServerEvent {
   type: "job_completed";
+  planId: string;
   jobId: string;
-  outputs?: unknown[];
+  outputs?: GenerationOutput[];
+  record?: GenerationRecord;
 }
 
 export interface AgentJobFailedEvent extends AgentBaseServerEvent {
   type: "job_failed";
+  planId: string;
   jobId: string;
   error: string;
 }
 
 export interface AgentJobBlockedEvent extends AgentBaseServerEvent {
   type: "job_blocked";
+  planId: string;
   jobId: string;
   reason: string;
 }
 
 export interface AgentAssetPreviewEvent extends AgentBaseServerEvent {
   type: "asset_preview";
+  planId: string;
   jobId: string;
+  outputId: string;
   assetId: string;
   url: string;
+  asset: GeneratedAsset;
+  shapeId?: string;
 }
 
 export interface AgentRunCancelledEvent extends AgentBaseServerEvent {

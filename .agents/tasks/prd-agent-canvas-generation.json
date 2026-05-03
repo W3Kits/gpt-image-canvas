@@ -303,7 +303,7 @@
     {
       "id": "AG-005",
       "title": "Execute Agent plans with dependency-aware canvas output",
-      "status": "open",
+      "status": "done",
       "dependsOn": [
         "AG-004"
       ],
@@ -324,7 +324,10 @@
         "Negative case: if all jobs fail or are blocked, the plan node and Agent chat show a clear Chinese failure summary without leaving loading placeholders forever.",
         "Browser verification: run a simple no-reference plan, a multi-prompt plan, a selected-reference plan, a generated character-anchor dependency plan, cancel in-flight execution, and retry a failed or blocked plan when possible.",
         "Verification: pnpm typecheck and pnpm build pass."
-      ]
+      ],
+      "startedAt": "2026-05-03T15:08:02.7098341+00:00",
+      "completedAt": "2026-05-03T15:11:47.8637166+00:00",
+      "updatedAt": "2026-05-03T15:11:47.8637166+00:00"
     },
     {
       "id": "AG-006",

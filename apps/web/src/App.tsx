@@ -227,6 +227,8 @@ interface AgentChatAssetPreview {
   id: string;
   assetId: string;
   jobId: string;
+  outputId?: string;
+  planId?: string;
   shapeId?: TLShapeId;
   url: string;
 }
@@ -867,6 +869,41 @@ function upsertAgentPlanNode(input: {
 
   const latestNode = existingNodes.at(-1);
   return createAgentPlanNode(input.editor, input.plan, input.lastRunId, latestNode).id;
+}
+
+function latestAgentPlanNode(editor: Editor, planId: string): AgentPlanNodeShape | undefined {
+  return findAgentPlanNodes(editor, planId).at(-1);
+}
+
+function agentOutputPlacement(
+  editor: Editor,
+  planId: string | undefined,
+  asset: GeneratedAsset,
+  index: number
+): GenerationPlaceholderPlacement {
+  const size = displaySize({
+    width: asset.width,
+    height: asset.height
+  });
+  const gap = 28;
+  const columns = 2;
+  const planNode = planId ? latestAgentPlanNode(editor, planId) : undefined;
+  const bounds = planNode ? editor.getShapePageBounds(planNode) : undefined;
+  const viewport = editor.getViewportPageBounds();
+  const baseX = bounds ? bounds.x + bounds.w + 56 : viewport.center.x + 72;
+  const baseY = bounds ? bounds.y : viewport.center.y - size.height / 2;
+  const column = index % columns;
+  const row = Math.floor(index / columns);
+
+  return {
+    id: createTldrawShapeId(),
+    x: baseX + column * (size.width + gap),
+    y: baseY + row * (size.height + gap),
+    width: size.width,
+    height: size.height,
+    targetWidth: asset.width,
+    targetHeight: asset.height
+  };
 }
 
 function isGenerationPlaceholderShape(shape: unknown): shape is GenerationPlaceholderShape {
@@ -2269,6 +2306,7 @@ export function App() {
   const agentSocketRef = useRef<WebSocket | null>(null);
   const agentSocketOpenPromiseRef = useRef<Promise<WebSocket> | null>(null);
   const activeAgentRunIdRef = useRef<string | null>(null);
+  const agentOutputPlacementCountsRef = useRef<Map<string, number>>(new Map());
   const saveTimerRef = useRef<number | undefined>();
   const codexPollTimerRef = useRef<number | undefined>();
   const saveRequestRef = useRef(0);
@@ -3416,12 +3454,48 @@ export function App() {
     });
   }
 
+  function addAgentOutputAssetToCanvas(event: Extract<AgentServerEvent, { type: "asset_preview" }>): TLShapeId | undefined {
+    const editor = editorRef.current;
+    if (!editor) {
+      return undefined;
+    }
+
+    const existingShapeId = findCanvasImageShapeByAssetId(editor, event.assetId, optionalShapeIdFromEvent(event));
+    if (existingShapeId) {
+      return existingShapeId;
+    }
+
+    const placementKey = event.planId || event.runId || "agent";
+    const placementIndex = agentOutputPlacementCountsRef.current.get(placementKey) ?? 0;
+    agentOutputPlacementCountsRef.current.set(placementKey, placementIndex + 1);
+
+    const imageShape = createImageShape(
+      event.asset,
+      agentOutputPlacement(editor, event.planId, event.asset, placementIndex),
+      `${event.jobId}: ${event.asset.fileName}`
+    );
+    const assetRecordId = createTldrawAssetId(event.asset.id);
+
+    editor.run(() => {
+      if (!editor.getAsset(assetRecordId)) {
+        editor.createAssets([createImageAsset(event.asset)]);
+      }
+      editor.createShapes([imageShape]);
+      editor.bringToFront([imageShape.id]);
+    });
+
+    return imageShape.id;
+  }
+
   function addAgentAssetPreview(event: Extract<AgentServerEvent, { type: "asset_preview" }>): void {
+    const shapeId = addAgentOutputAssetToCanvas(event);
     const preview: AgentChatAssetPreview = {
       id: `agent-preview-${event.jobId}-${event.assetId}-${crypto.randomUUID()}`,
       assetId: event.assetId,
       jobId: event.jobId,
-      shapeId: optionalShapeIdFromEvent(event),
+      outputId: event.outputId,
+      planId: event.planId,
+      shapeId,
       url: event.url
     };
 
@@ -3468,6 +3542,10 @@ export function App() {
       return;
     }
 
+    if (event.type === "plan_created") {
+      agentOutputPlacementCountsRef.current.delete(event.plan.id);
+    }
+
     upsertAgentPlanNode({
       editor,
       eventType: event.type,
@@ -3507,6 +3585,11 @@ export function App() {
         });
         return;
       case "job_completed":
+        if (event.record) {
+          setGenerationHistory((history) =>
+            [event.record as GenerationRecord, ...history.filter((record) => record.id !== event.record?.id)].slice(0, 20)
+          );
+        }
         addAgentMessage({
           role: "system",
           content: t("agentJobCompleted", { jobId: event.jobId })
@@ -3778,8 +3861,12 @@ export function App() {
       const socket = await ensureAgentSocket();
       const editor = editorRef.current;
       const shape = editor?.getShape(detail.shapeId as TLShapeId);
+      let planForExecution: GenerationPlan | undefined;
       if (editor && isAgentPlanNodeShape(shape)) {
         const props = normalizeAgentPlanNodePropsForSnapshot(shape.props);
+        if (isGenerationPlan(props.plan)) {
+          planForExecution = props.plan;
+        }
         editor.updateShapes<AgentPlanNodeShape>([
           {
             id: shape.id,
@@ -3792,12 +3879,17 @@ export function App() {
         ]);
       }
 
+      if (!planForExecution) {
+        throw new Error(t("agentInvalidEvent"));
+      }
+
       socket.send(
         JSON.stringify({
           type: detail.action === "execute" ? "execute_plan" : "retry_failed",
           requestId: `agent-plan-action-${crypto.randomUUID()}`,
           runId,
-          planId: detail.planId
+          planId: detail.planId,
+          plan: planForExecution
         })
       );
       setAgentRunStatus("running");
