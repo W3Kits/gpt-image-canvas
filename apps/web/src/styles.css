@@ -685,16 +685,37 @@ body {
 
 .agent-plan-node__detail {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.55rem;
+  max-height: 13.4rem;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.58rem;
   flex: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border-top: 1px solid #ead1bc;
   background: #fffdf8;
   padding: 0.62rem 0.75rem;
 }
 
-.agent-plan-node__detail div {
+.agent-plan-node__detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
   min-width: 0;
+}
+
+.agent-plan-node__detail-grid + .agent-plan-node__detail-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.agent-plan-node__detail-item {
+  min-width: 0;
+}
+
+.agent-plan-node__detail-item--full {
+  display: grid;
+  gap: 0.22rem;
 }
 
 .agent-plan-node__detail span {
@@ -708,13 +729,91 @@ body {
 
 .agent-plan-node__detail p {
   margin: 0.25rem 0 0;
-  overflow: hidden;
   color: var(--ink);
   font-size: 0.68rem;
   font-weight: 700;
   line-height: 1.3;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.agent-plan-node__detail-empty {
+  color: var(--muted-ink);
+}
+
+.agent-plan-node__detail-output-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.42rem;
+  margin-top: 0.25rem;
+}
+
+.agent-plan-node__detail-output {
+  display: grid;
+  min-width: 0;
+  gap: 0.28rem;
+  margin: 0;
+}
+
+.agent-plan-node__detail-output-thumb {
+  display: inline-flex;
+  aspect-ratio: 1;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px dashed #d8bea0;
+  border-radius: 6px;
+  background: #fff8ee;
+  color: #9a8c7b;
+}
+
+.agent-plan-node__detail-output[data-state="filled"] .agent-plan-node__detail-output-thumb {
+  border-style: solid;
+  background: #211b16;
+}
+
+.agent-plan-node__detail-output[data-state="failed"] .agent-plan-node__detail-output-thumb {
+  border-color: #f2b8ad;
+  background: #fff1ed;
+  color: #b42318;
+}
+
+.agent-plan-node__detail-output-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.agent-plan-node__detail-output-thumb svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.agent-plan-node__detail-output figcaption {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
+}
+
+.agent-plan-node__detail-output figcaption strong,
+.agent-plan-node__detail-output figcaption small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-ink);
+  font-size: 0.58rem;
+  font-weight: 800;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.agent-plan-node__detail-output figcaption small {
+  display: -webkit-box;
+  color: #6e6257;
+  font-weight: 700;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .agent-plan-node__empty {
@@ -3460,7 +3559,51 @@ a:focus-visible {
   border: 1px solid #ead1bc;
   border-radius: 7px;
   background: #fffdf8;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
   padding: 0.6rem;
+  text-align: left;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+.agent-plan-card:hover {
+  border-color: var(--accent-dark);
+  box-shadow: 0 8px 18px rgb(126 50 26 / 0.12);
+  transform: translateY(-1px);
+}
+
+.agent-plan-card:focus-visible {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px rgb(15 118 110 / 0.18);
+  outline: 0;
+}
+
+.agent-plan-card--invalid {
+  cursor: default;
+  border-color: #f2b8ad;
+  background: #fff1ed;
+}
+
+.agent-plan-card--invalid:hover {
+  border-color: #f2b8ad;
+  box-shadow: none;
+  transform: none;
+}
+
+.agent-plan-card__heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.agent-plan-card__heading svg {
+  color: var(--accent-dark);
 }
 
 .agent-plan-card strong {
@@ -5341,7 +5484,8 @@ a:focus-visible {
 }
 
 .app-root[data-canvas-theme="dark"] .agent-message--error,
-.app-root[data-canvas-theme="dark"] .agent-inline-warning {
+.app-root[data-canvas-theme="dark"] .agent-inline-warning,
+.app-root[data-canvas-theme="dark"] .agent-plan-card--invalid {
   border-color: rgb(248 113 113 / 0.35);
   background: rgb(127 29 29 / 0.22);
   color: #fca5a5;
@@ -5417,6 +5561,7 @@ a:focus-visible {
 .app-root[data-canvas-theme="dark"] .agent-plan-node__job-row,
 .app-root[data-canvas-theme="dark"] .agent-plan-node__chip,
 .app-root[data-canvas-theme="dark"] .agent-plan-node__thumbnail,
+.app-root[data-canvas-theme="dark"] .agent-plan-node__detail-output-thumb,
 .app-root[data-canvas-theme="dark"] .agent-plan-node__detail {
   border-color: rgb(198 95 50 / 0.26);
   background: #1d1713;
@@ -5455,7 +5600,8 @@ a:focus-visible {
 .app-root[data-canvas-theme="dark"] .agent-plan-node__status[data-tone="danger"],
 .app-root[data-canvas-theme="dark"] .agent-plan-node__job-row[data-job-status="failed"],
 .app-root[data-canvas-theme="dark"] .agent-plan-node__job-row[data-job-status="blocked"],
-.app-root[data-canvas-theme="dark"] .agent-plan-node__thumbnail[data-state="failed"] {
+.app-root[data-canvas-theme="dark"] .agent-plan-node__thumbnail[data-state="failed"],
+.app-root[data-canvas-theme="dark"] .agent-plan-node__detail-output[data-state="failed"] .agent-plan-node__detail-output-thumb {
   border-color: rgb(248 113 113 / 0.35);
   background: rgb(127 29 29 / 0.22);
   color: #fca5a5;

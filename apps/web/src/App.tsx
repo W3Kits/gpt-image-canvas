@@ -60,6 +60,7 @@ import {
   isGenerationPlan,
   isUnexecutedPlanStatus,
   normalizeAgentPlanNodePropsForSnapshot,
+  summarizeGenerationPlanOutputs,
   type AgentPlanNodeActionDetail,
   type AgentPlanNodeShape
 } from "./AgentPlanNodeShape";
@@ -239,7 +240,7 @@ interface AgentChatMessage {
   content: string;
   timestamp: string;
   runId?: string;
-  plan?: GenerationPlan;
+  plan?: unknown;
   previews?: AgentChatAssetPreview[];
 }
 
@@ -874,6 +875,49 @@ function upsertAgentPlanNode(input: {
 
 function latestAgentPlanNode(editor: Editor, planId: string): AgentPlanNodeShape | undefined {
   return findAgentPlanNodes(editor, planId).at(-1);
+}
+
+type AgentPlanNodeLookupResult =
+  | {
+      status: "found";
+      shape: AgentPlanNodeShape;
+    }
+  | {
+      status: "malformed" | "missing";
+    };
+
+function findLatestAgentPlanNodeForActivation(editor: Editor, planId: string): AgentPlanNodeLookupResult {
+  let latestMatch: AgentPlanNodeShape | undefined;
+  let hasMalformedMatch = false;
+
+  for (const shape of editor.getCurrentPageShapes()) {
+    if (!isAgentPlanNodeShape(shape)) {
+      continue;
+    }
+
+    const props = normalizeAgentPlanNodePropsForSnapshot(shape.props);
+    if (isGenerationPlan(props.plan)) {
+      if (props.plan.id === planId) {
+        latestMatch = shape;
+      }
+      continue;
+    }
+
+    if (isRecord(props.plan) && props.plan.id === planId) {
+      hasMalformedMatch = true;
+    }
+  }
+
+  if (latestMatch) {
+    return {
+      status: "found",
+      shape: latestMatch
+    };
+  }
+
+  return {
+    status: hasMalformedMatch ? "malformed" : "missing"
+  };
 }
 
 function agentOutputPlacement(
@@ -1838,12 +1882,51 @@ function parseAgentServerEvent(data: MessageEvent["data"]): AgentServerEvent | u
   }
 }
 
-function generationPlanOutputCount(plan: GenerationPlan): number {
-  return plan.jobs.reduce((total, job) => total + job.count, 0);
-}
-
 function optionalShapeIdFromEvent(event: AgentServerEvent): TLShapeId | undefined {
   return isRecord(event) && typeof event.shapeId === "string" ? (event.shapeId as TLShapeId) : undefined;
+}
+
+function AgentPlanCard({
+  onLocate,
+  plan,
+  t
+}: {
+  onLocate: (plan: unknown) => void;
+  plan: unknown;
+  t: Translate;
+}) {
+  if (!isGenerationPlan(plan)) {
+    return (
+      <div className="agent-plan-card agent-plan-card--invalid" data-state="invalid" data-testid="agent-plan-card" role="status">
+        <strong>{t("agentPlanUnreadableTitle")}</strong>
+        <span>{t("agentPlanUnreadableCard")}</span>
+      </div>
+    );
+  }
+
+  const summary = summarizeGenerationPlanOutputs(plan);
+
+  return (
+    <button
+      aria-label={t("agentPlanLocate", { title: plan.title })}
+      className="agent-plan-card"
+      data-testid="agent-plan-card"
+      type="button"
+      onClick={() => onLocate(plan)}
+    >
+      <span className="agent-plan-card__heading">
+        <strong>{plan.title}</strong>
+        <MapPin className="size-3.5" aria-hidden="true" />
+      </span>
+      <span>
+        {t("agentPlanSummary", {
+          finalOutputs: summary.finalImageCount,
+          jobs: summary.jobCount,
+          supportOutputs: summary.supportImageCount
+        })}
+      </span>
+    </button>
+  );
 }
 
 async function readErrorMessage(response: Response, locale: Locale, t: Translate): Promise<string> {
@@ -3511,7 +3594,8 @@ export function App() {
     setAgentMessages((messages) => {
       let existingIndex = -1;
       for (let index = messages.length - 1; index >= 0; index -= 1) {
-        if (messages[index]?.plan?.id === plan.id) {
+        const existingPlan = messages[index]?.plan;
+        if (isGenerationPlan(existingPlan) && existingPlan.id === plan.id) {
           existingIndex = index;
           break;
         }
@@ -3662,11 +3746,27 @@ export function App() {
         if (isStaleAgentRunEvent(event)) {
           return;
         }
+        if (!isGenerationPlan(event.plan)) {
+          addAgentMessage({
+            role: "error",
+            content: t("agentInvalidEvent"),
+            runId: runIdForAgentEvent(event)
+          });
+          return;
+        }
         syncAgentPlanNodeFromEvent(event);
         upsertAgentPlanAttachment(event.plan, t("agentPlanCreated", { title: event.plan.title }), runIdForAgentEvent(event));
         return;
       case "plan_updated":
         if (isStaleAgentRunEvent(event)) {
+          return;
+        }
+        if (!isGenerationPlan(event.plan)) {
+          addAgentMessage({
+            role: "error",
+            content: t("agentInvalidEvent"),
+            runId: runIdForAgentEvent(event)
+          });
           return;
         }
         syncAgentPlanNodeFromEvent(event);
@@ -4050,6 +4150,45 @@ export function App() {
       window.removeEventListener(AGENT_PLAN_NODE_ACTION_EVENT, handleAgentPlanNodeAction);
     };
   });
+
+  function locateAgentPlan(planPayload: unknown): void {
+    if (!isGenerationPlan(planPayload)) {
+      addAgentMessage({
+        role: "error",
+        content: t("agentPlanLocateInvalid")
+      });
+      return;
+    }
+
+    const editor = editorRef.current;
+    if (!editor) {
+      addAgentMessage({
+        role: "error",
+        content: t("generationCanvasNotReady")
+      });
+      return;
+    }
+
+    const result = findLatestAgentPlanNodeForActivation(editor, planPayload.id);
+    if (result.status !== "found") {
+      addAgentMessage({
+        role: "error",
+        content: result.status === "malformed" ? t("agentPlanLocateMalformed") : t("agentPlanLocateMissing")
+      });
+      return;
+    }
+
+    const bounds = editor.getShapePageBounds(result.shape);
+    editor.select(result.shape.id);
+    if (bounds) {
+      editor.zoomToBounds(bounds, {
+        animation: { duration: 220 },
+        inset: 96
+      });
+    } else {
+      editor.zoomToSelection({ animation: { duration: 220 } });
+    }
+  }
 
   function locateAgentPreview(preview: AgentChatAssetPreview): void {
     const editor = editorRef.current;
@@ -4789,12 +4928,7 @@ export function App() {
                     </div>
                   )}
                   <p className="agent-message__content">{message.content}</p>
-                  {message.plan ? (
-                    <div className="agent-plan-card" data-testid="agent-plan-card">
-                      <strong>{message.plan.title}</strong>
-                      <span>{t("agentPlanSummary", { jobs: message.plan.jobs.length, outputs: generationPlanOutputCount(message.plan) })}</span>
-                    </div>
-                  ) : null}
+                  {message.plan ? <AgentPlanCard onLocate={locateAgentPlan} plan={message.plan} t={t} /> : null}
                   {message.previews?.length ? (
                     <div className="agent-preview-list">
                       {message.previews.map((preview) => (

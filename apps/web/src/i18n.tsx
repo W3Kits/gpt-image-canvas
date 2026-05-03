@@ -212,9 +212,29 @@ const zhMessages = {
   agentJobStarted: ({ jobId }: { jobId: string }) => `${jobId} 已开始。`,
   agentMessageRole: ({ role }: { role: "user" | "assistant" | "thinking" | "system" | "error" | "plan" }) =>
     ({ user: "你", assistant: "Agent", thinking: "思考", system: "状态", error: "错误", plan: "计划" })[role],
+  agentPlanLocate: ({ title }: { title: string }) => `定位画布计划节点：${title}`,
+  agentPlanLocateInvalid: "这张计划卡片数据无效，无法定位画布节点。请重新生成计划。",
+  agentPlanLocateMalformed: "对应的画布计划节点数据已损坏，已停止定位操作。请重新生成计划。",
+  agentPlanLocateMissing: "没有找到对应的画布计划节点。请刷新或重新生成计划后再试。",
   agentPlanCreated: ({ title }: { title: string }) => `已创建计划：${title}`,
-  agentPlanSummary: ({ jobs, outputs }: { jobs: number; outputs: number }) => `${jobs} 个任务，预计 ${outputs} 张图`,
+  agentPlanSummary: ({
+    finalOutputs,
+    jobs,
+    supportOutputs
+  }: {
+    finalOutputs: number;
+    jobs: number;
+    supportOutputs: number;
+  }) => {
+    const parts = [
+      finalOutputs > 0 ? `${finalOutputs} 张最终图` : "",
+      supportOutputs > 0 ? `${supportOutputs} 张支持图` : ""
+    ].filter(Boolean);
+    return `${parts.join("，") || "暂未安排输出图"}，${jobs} 个任务`;
+  },
   agentPlanUpdated: ({ title }: { title: string }) => `计划已更新：${title}`,
+  agentPlanUnreadableCard: "这张计划卡片数据不完整，已安全停止定位操作。",
+  agentPlanUnreadableTitle: "计划卡片无法读取",
   agentPreviewLocate: "定位这张 Agent 输出图",
   agentPreviewReady: "Agent 生成了新的预览图。",
   agentPreviewShapePending: "这张缩略图仍在同步到画布，等 Agent 更新后再定位。",
@@ -581,9 +601,21 @@ const enMessages: I18nMessages = {
   agentJobFailed: ({ jobId, error }) => `${jobId} failed: ${error}`,
   agentJobStarted: ({ jobId }) => `${jobId} started.`,
   agentMessageRole: ({ role }) => ({ user: "You", assistant: "Agent", thinking: "Thinking", system: "Status", error: "Error", plan: "Plan" })[role],
+  agentPlanLocate: ({ title }) => `Locate canvas plan node: ${title}`,
+  agentPlanLocateInvalid: "This plan card has invalid data, so the canvas node was not located. Generate the plan again.",
+  agentPlanLocateMalformed: "The matching canvas plan node has malformed data, so locating stopped. Generate the plan again.",
+  agentPlanLocateMissing: "The matching canvas plan node was not found. Refresh or generate the plan again.",
   agentPlanCreated: ({ title }) => `Plan created: ${title}`,
-  agentPlanSummary: ({ jobs, outputs }) => `${jobs} jobs, ${outputs} expected images`,
+  agentPlanSummary: ({ finalOutputs, jobs, supportOutputs }) => {
+    const parts = [
+      finalOutputs > 0 ? `${finalOutputs} final ${finalOutputs === 1 ? "image" : "images"}` : "",
+      supportOutputs > 0 ? `${supportOutputs} support ${supportOutputs === 1 ? "image" : "images"}` : ""
+    ].filter(Boolean);
+    return `${parts.join(", ") || "no output images planned"}, ${jobs} ${jobs === 1 ? "job" : "jobs"}`;
+  },
   agentPlanUpdated: ({ title }) => `Plan updated: ${title}`,
+  agentPlanUnreadableCard: "This plan card is incomplete, so locating stopped safely.",
+  agentPlanUnreadableTitle: "Plan card unreadable",
   agentPreviewLocate: "Locate this Agent output image",
   agentPreviewReady: "Agent produced a new preview image.",
   agentPreviewShapePending: "This thumbnail is still syncing to the canvas; try again after the Agent run updates.",

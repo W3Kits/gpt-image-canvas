@@ -2,13 +2,16 @@ import { CheckCircle2, CircleStop, ImageIcon, Loader2, Play, RotateCcw, XCircle 
 import { BaseBoxShapeUtil, HTMLContainer, RecordProps, T, TLShape, useEditor } from "tldraw";
 import type {
   GenerationDependencyEdge,
+  GeneratedAsset,
   GenerationJob,
   GenerationJobRole,
   GenerationJobStatus,
+  GenerationOutput,
   GenerationPlan,
   GenerationPlanStatus,
   GenerationReference,
-  GenerationReferenceUsage
+  GenerationReferenceUsage,
+  OutputStatus
 } from "@gpt-image-canvas/shared";
 import { useI18n, type Locale } from "./i18n";
 
@@ -44,6 +47,13 @@ export type AgentPlanNodeShape = TLShape<typeof AGENT_PLAN_NODE_TYPE>;
 
 type PlanStatusTone = "idle" | "active" | "success" | "warning" | "danger";
 
+export interface GenerationPlanOutputSummary {
+  finalImageCount: number;
+  supportImageCount: number;
+  totalImageCount: number;
+  jobCount: number;
+}
+
 const planStatuses: readonly GenerationPlanStatus[] = [
   "awaiting_confirmation",
   "confirmed",
@@ -54,6 +64,7 @@ const planStatuses: readonly GenerationPlanStatus[] = [
   "cancelled"
 ];
 const jobStatuses: readonly GenerationJobStatus[] = ["queued", "running", "succeeded", "failed", "blocked", "cancelled"];
+const outputStatuses: readonly OutputStatus[] = ["succeeded", "failed"];
 const jobRoles: readonly GenerationJobRole[] = [
   "final_image",
   "variation",
@@ -76,17 +87,33 @@ const labels: Record<Locale, {
   badPlanCopy: string;
   badPlanTitle: string;
   count: (count: number) => string;
+  countLabel: string;
   dependencies: string;
   dependencyChip: (jobId: string) => string;
+  detailTitle: string;
   emptySlot: string;
+  emptyOutputSummary: string;
   errorFallback: string;
+  errorLabel: string;
+  finalOutputCount: (count: number) => string;
   generatedReference: (jobId: string) => string;
   jobs: string;
+  noDependencies: string;
+  noOutputs: string;
+  noReferences: string;
+  outputFailed: string;
   outputCount: (count: number) => string;
+  outputReady: string;
+  outputSlot: (index: number) => string;
+  outputs: string;
+  prompt: string;
   references: string;
+  roleLabel: string;
   role: Record<GenerationJobRole, string>;
   selectedReference: string;
+  statusLabel: string;
   status: Record<GenerationPlanStatus, string>;
+  supportOutputCount: (count: number) => string;
   jobStatus: Record<GenerationJobStatus, string>;
   usage: Record<GenerationReferenceUsage, string>;
 }> = {
@@ -99,14 +126,28 @@ const labels: Record<Locale, {
     badPlanCopy: "快照中的计划节点数据已损坏，已安全保留节点但不执行任何操作。",
     badPlanTitle: "无法读取 Agent 计划",
     count: (count) => `${count} 张`,
+    countLabel: "数量",
     dependencies: "依赖",
     dependencyChip: (jobId) => `依赖 ${jobId}`,
+    detailTitle: "任务详情",
     emptySlot: "等待缩略图",
+    emptyOutputSummary: "暂无输出图",
     errorFallback: "任务失败，暂无更多错误信息。",
+    errorLabel: "错误",
+    finalOutputCount: (count) => `${count} 张最终图`,
     generatedReference: (jobId) => `来自 ${jobId}`,
     jobs: "任务",
+    noDependencies: "无依赖",
+    noOutputs: "没有输出槽",
+    noReferences: "无引用",
+    outputFailed: "输出失败",
     outputCount: (count) => `预计 ${count} 张图`,
+    outputReady: "缩略图已就绪",
+    outputSlot: (index) => `输出 ${index}`,
+    outputs: "输出槽",
+    prompt: "完整提示词",
     references: "参考",
+    roleLabel: "角色",
     role: {
       final_image: "最终图",
       variation: "变体",
@@ -115,6 +156,7 @@ const labels: Record<Locale, {
       reference_anchor: "参考锚点"
     },
     selectedReference: "画布参考",
+    statusLabel: "状态",
     status: {
       awaiting_confirmation: "待确认",
       confirmed: "已确认",
@@ -124,6 +166,7 @@ const labels: Record<Locale, {
       failed: "失败",
       cancelled: "已取消"
     },
+    supportOutputCount: (count) => `${count} 张支持图`,
     jobStatus: {
       queued: "排队",
       running: "生成中",
@@ -151,14 +194,28 @@ const labels: Record<Locale, {
     badPlanCopy: "This saved plan node has malformed data. The node is preserved safely and no actions are available.",
     badPlanTitle: "Agent plan unreadable",
     count: (count) => `${count} images`,
+    countLabel: "Count",
     dependencies: "Deps",
     dependencyChip: (jobId) => `Depends on ${jobId}`,
+    detailTitle: "Job details",
     emptySlot: "Thumbnail pending",
+    emptyOutputSummary: "No output images",
     errorFallback: "Job failed without more detail.",
+    errorLabel: "Error",
+    finalOutputCount: (count) => `${count} final ${count === 1 ? "image" : "images"}`,
     generatedReference: (jobId) => `From ${jobId}`,
     jobs: "Jobs",
+    noDependencies: "No dependencies",
+    noOutputs: "No output slots",
+    noReferences: "No references",
+    outputFailed: "Output failed",
     outputCount: (count) => `${count} expected images`,
+    outputReady: "Thumbnail ready",
+    outputSlot: (index) => `Output ${index}`,
+    outputs: "Output slots",
+    prompt: "Full prompt",
     references: "Refs",
+    roleLabel: "Role",
     role: {
       final_image: "Final",
       variation: "Variation",
@@ -167,6 +224,7 @@ const labels: Record<Locale, {
       reference_anchor: "Reference anchor"
     },
     selectedReference: "Canvas reference",
+    statusLabel: "Status",
     status: {
       awaiting_confirmation: "Awaiting confirmation",
       confirmed: "Confirmed",
@@ -176,6 +234,7 @@ const labels: Record<Locale, {
       failed: "Failed",
       cancelled: "Cancelled"
     },
+    supportOutputCount: (count) => `${count} support ${count === 1 ? "image" : "images"}`,
     jobStatus: {
       queued: "Queued",
       running: "Generating",
@@ -220,6 +279,31 @@ function isGenerationReference(value: unknown): value is GenerationReference {
   return false;
 }
 
+function isGeneratedAsset(value: unknown): value is GeneratedAsset {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.url === "string" &&
+    typeof value.fileName === "string" &&
+    typeof value.mimeType === "string" &&
+    typeof value.width === "number" &&
+    Number.isFinite(value.width) &&
+    typeof value.height === "number" &&
+    Number.isFinite(value.height) &&
+    (value.cloud === undefined || isRecord(value.cloud))
+  );
+}
+
+function isGenerationOutput(value: unknown): value is GenerationOutput {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    isOneOf(value.status, outputStatuses) &&
+    (value.asset === undefined || isGeneratedAsset(value.asset)) &&
+    (value.error === undefined || typeof value.error === "string")
+  );
+}
+
 function isGenerationJob(value: unknown): value is GenerationJob {
   const count = isRecord(value) ? value.count : undefined;
 
@@ -235,6 +319,7 @@ function isGenerationJob(value: unknown): value is GenerationJob {
     Array.isArray(value.references) &&
     value.references.every(isGenerationReference) &&
     Array.isArray(value.outputs) &&
+    value.outputs.every(isGenerationOutput) &&
     typeof value.visible === "boolean" &&
     (value.error === undefined || typeof value.error === "string")
   );
@@ -277,8 +362,33 @@ export function hasFailedPlanJob(plan: GenerationPlan): boolean {
   return plan.jobs.some((job) => job.status === "failed" || job.status === "blocked");
 }
 
+function normalizedJobOutputCount(count: number): number {
+  return Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
+}
+
+export function summarizeGenerationPlanOutputs(plan: GenerationPlan): GenerationPlanOutputSummary {
+  return plan.jobs.reduce<GenerationPlanOutputSummary>(
+    (summary, job) => {
+      const count = normalizedJobOutputCount(job.count);
+      if (job.role === "final_image") {
+        summary.finalImageCount += count;
+      } else {
+        summary.supportImageCount += count;
+      }
+      summary.totalImageCount += count;
+      return summary;
+    },
+    {
+      finalImageCount: 0,
+      supportImageCount: 0,
+      totalImageCount: 0,
+      jobCount: plan.jobs.length
+    }
+  );
+}
+
 export function generationPlanOutputCount(plan: GenerationPlan): number {
-  return plan.jobs.reduce((total, job) => total + Math.max(0, Math.trunc(job.count)), 0);
+  return summarizeGenerationPlanOutputs(plan).totalImageCount;
 }
 
 export function createAgentPlanNodeProps(plan: GenerationPlan, lastRunId = ""): AgentPlanNodeProps {
@@ -395,7 +505,7 @@ function referenceChip(reference: GenerationReference, locale: Locale): string {
 }
 
 function AgentPlanThumbnailSlots({ job, locale }: { job: GenerationJob; locale: Locale }) {
-  const slotCount = Math.max(1, Math.min(4, Math.trunc(job.count)));
+  const slotCount = Math.max(1, Math.min(4, normalizedJobOutputCount(job.count)));
   const outputs = job.outputs.slice(0, slotCount);
 
   return (
@@ -419,6 +529,67 @@ function AgentPlanThumbnailSlots({ job, locale }: { job: GenerationJob; locale: 
           >
             {output?.status === "failed" ? <XCircle aria-hidden="true" /> : <ImageIcon aria-hidden="true" />}
           </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function detailOutputSlots(job: GenerationJob): Array<GenerationOutput | undefined> {
+  const slotCount = Math.max(normalizedJobOutputCount(job.count), job.outputs.length);
+  return Array.from({ length: slotCount }, (_, index) => job.outputs[index]);
+}
+
+function outputSlotState(output: GenerationOutput | undefined): "empty" | "failed" | "filled" {
+  if (output?.status === "failed") {
+    return "failed";
+  }
+
+  return output?.asset?.url ? "filled" : "empty";
+}
+
+function outputSlotDescription(output: GenerationOutput | undefined, locale: Locale): string {
+  const copy = labels[locale];
+  if (!output) {
+    return copy.emptySlot;
+  }
+
+  if (output.status === "failed") {
+    return output.error || copy.outputFailed;
+  }
+
+  return output.asset?.fileName || output.asset?.id || output.id || copy.outputReady;
+}
+
+function AgentPlanDetailOutputSlots({ job, locale }: { job: GenerationJob; locale: Locale }) {
+  const copy = labels[locale];
+  const slots = detailOutputSlots(job);
+
+  if (slots.length === 0) {
+    return <p className="agent-plan-node__detail-empty">{copy.noOutputs}</p>;
+  }
+
+  return (
+    <div className="agent-plan-node__detail-output-grid" aria-label={`${job.id} ${copy.outputs}`}>
+      {slots.map((output, index) => {
+        const state = outputSlotState(output);
+        const description = outputSlotDescription(output, locale);
+        return (
+          <figure className="agent-plan-node__detail-output" data-state={state} key={`${job.id}-detail-output-${output?.id ?? index}`}>
+            <span className="agent-plan-node__detail-output-thumb">
+              {output?.asset?.url ? (
+                <img src={output.asset.url} alt={`${copy.outputSlot(index + 1)} ${description}`} />
+              ) : state === "failed" ? (
+                <XCircle aria-hidden="true" />
+              ) : (
+                <ImageIcon aria-hidden="true" />
+              )}
+            </span>
+            <figcaption>
+              <strong>{copy.outputSlot(index + 1)}</strong>
+              <small>{description}</small>
+            </figcaption>
+          </figure>
         );
       })}
     </div>
@@ -458,6 +629,13 @@ function AgentPlanNodeContent({ shape }: { shape: AgentPlanNodeShape }) {
   }
 
   const selectedJob = plan.jobs.find((job) => job.id === props.selectedJobId) ?? plan.jobs[0];
+  const selectedDependencies = selectedJob ? dependencyChips(plan, selectedJob) : [];
+  const outputSummary = summarizeGenerationPlanOutputs(plan);
+  const summaryParts = [
+    outputSummary.finalImageCount > 0 ? copy.finalOutputCount(outputSummary.finalImageCount) : "",
+    outputSummary.supportImageCount > 0 ? copy.supportOutputCount(outputSummary.supportImageCount) : ""
+  ].filter(Boolean);
+  const outputSummaryLabel = summaryParts.join(" · ") || copy.emptyOutputSummary;
   const canExecute = plan.status === "awaiting_confirmation" || plan.status === "confirmed";
   const canCancel = plan.status === "running";
   const canRetry = hasFailedPlanJob(plan);
@@ -479,8 +657,8 @@ function AgentPlanNodeContent({ shape }: { shape: AgentPlanNodeShape }) {
         </span>
       </div>
 
-      <div className="agent-plan-node__summary" aria-label={copy.outputCount(generationPlanOutputCount(plan))}>
-        <span>{copy.outputCount(generationPlanOutputCount(plan))}</span>
+      <div className="agent-plan-node__summary" aria-label={outputSummaryLabel}>
+        {summaryParts.length > 0 ? summaryParts.map((part) => <span key={part}>{part}</span>) : <span>{copy.emptyOutputSummary}</span>}
         <span>{plan.jobs.length} {copy.jobs}</span>
       </div>
 
@@ -582,16 +760,44 @@ function AgentPlanNodeContent({ shape }: { shape: AgentPlanNodeShape }) {
       </div>
 
       {selectedJob ? (
-        <div className="agent-plan-node__detail">
-          <div>
-            <span>{copy.dependencies}</span>
-            <p>{dependencyChips(plan, selectedJob).join(", ") || "-"}</p>
+        <section className="agent-plan-node__detail" aria-label={`${copy.detailTitle}: ${selectedJob.id}`} onPointerDown={(event) => event.stopPropagation()}>
+          <div className="agent-plan-node__detail-grid">
+            <div className="agent-plan-node__detail-item">
+              <span>{copy.roleLabel}</span>
+              <p>{copy.role[selectedJob.role]}</p>
+            </div>
+            <div className="agent-plan-node__detail-item">
+              <span>{copy.countLabel}</span>
+              <p>{copy.count(selectedJob.count)}</p>
+            </div>
+            <div className="agent-plan-node__detail-item">
+              <span>{copy.statusLabel}</span>
+              <p>{copy.jobStatus[selectedJob.status]}</p>
+            </div>
           </div>
-          <div>
-            <span>{copy.references}</span>
-            <p>{selectedJob.references.map((reference) => referenceChip(reference, locale)).join(", ") || "-"}</p>
+          <div className="agent-plan-node__detail-item agent-plan-node__detail-item--full">
+            <span>{copy.prompt}</span>
+            <p>{selectedJob.prompt || "-"}</p>
           </div>
-        </div>
+          <div className="agent-plan-node__detail-grid">
+            <div className="agent-plan-node__detail-item">
+              <span>{copy.dependencies}</span>
+              <p>{selectedDependencies.join(", ") || copy.noDependencies}</p>
+            </div>
+            <div className="agent-plan-node__detail-item">
+              <span>{copy.references}</span>
+              <p>{selectedJob.references.map((reference) => referenceChip(reference, locale)).join(", ") || copy.noReferences}</p>
+            </div>
+          </div>
+          <div className="agent-plan-node__detail-item agent-plan-node__detail-item--full">
+            <span>{copy.errorLabel}</span>
+            <p>{selectedJob.error || "-"}</p>
+          </div>
+          <div className="agent-plan-node__detail-item agent-plan-node__detail-item--full">
+            <span>{copy.outputs}</span>
+            <AgentPlanDetailOutputSlots job={selectedJob} locale={locale} />
+          </div>
+        </section>
       ) : null}
     </HTMLContainer>
   );
