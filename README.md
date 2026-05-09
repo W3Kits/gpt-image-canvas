@@ -191,6 +191,19 @@ Use `docker compose config --quiet --no-env-resolution` when real credentials ex
 
 Compose defaults `SQLITE_JOURNAL_MODE=DELETE` and `SQLITE_LOCKING_MODE=EXCLUSIVE` to avoid SQLite shared-memory errors on Docker Desktop bind mounts. Avoid running `pnpm dev` and Docker against the same `data/` directory at the same time.
 
+### Prebuilt GHCR Image
+
+Release publishing pushes a multi-platform image to GHCR, so upgrades can pull the repository image instead of rebuilding locally:
+
+```sh
+docker compose -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.ghcr.yml up -d
+```
+
+The default image is `ghcr.io/mrslimslim/gpt-image-canvas:latest`. To pin a release, set `IMAGE` before running Compose, for example `ghcr.io/mrslimslim/gpt-image-canvas:v0.3.0`.
+
+Release tags are published as `vX.Y.Z`, `X.Y.Z`, and `X.Y`; non-prerelease GitHub Releases also update `latest`. Public GHCR packages can be pulled anonymously. If GitHub shows the package as private, run `docker login ghcr.io` or make the package public in the repository package settings.
+
 The Compose build accepts these network-related build args:
 
 - `NODE_IMAGE`

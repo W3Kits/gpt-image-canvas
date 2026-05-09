@@ -191,6 +191,19 @@ docker compose up --build
 
 Compose 默认设置 `SQLITE_JOURNAL_MODE=DELETE` 和 `SQLITE_LOCKING_MODE=EXCLUSIVE`，用于避开 Docker Desktop 绑定挂载目录时常见的 SQLite shared-memory 错误。不要让 `pnpm dev` 和 Docker 同时使用同一个 `data/` 目录。
 
+### 预构建 GHCR 镜像
+
+发版 workflow 会把多架构镜像推送到 GHCR，升级时可以直接拉仓库镜像，不需要本地重新构建：
+
+```sh
+docker compose -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.ghcr.yml up -d
+```
+
+默认镜像是 `ghcr.io/mrslimslim/gpt-image-canvas:latest`。如需固定某个版本，请在运行 Compose 前设置 `IMAGE`，例如 `ghcr.io/mrslimslim/gpt-image-canvas:v0.3.0`。
+
+发布标签会生成 `vX.Y.Z`、`X.Y.Z` 和 `X.Y` 镜像标签；非 prerelease 的 GitHub Release 还会更新 `latest`。公开 GHCR package 可以匿名拉取；如果 GitHub 显示 package 是私有的，请先运行 `docker login ghcr.io`，或在仓库 package 设置里改为公开。
+
 Compose 构建支持这些网络相关 build args：
 
 - `NODE_IMAGE`
