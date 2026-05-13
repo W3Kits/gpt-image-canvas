@@ -3,11 +3,11 @@ import { ChatOpenAI } from "@langchain/openai";
 import { createDeepAgent } from "deepagents";
 import type { UsableAgentLlmConfig } from "./config.js";
 import {
+  createBuiltInPlanningSkillLoadoutForRequest,
   createEmbeddedPlanningSkillsPrompt,
   createPlanningSkillFiles,
-  createPlanningSkillSelectionForRequest,
   createPlanningSystemPrompt,
-  type PlanningSkillSelection
+  type PlanningSkillLoadout
 } from "./planning-skill.js";
 import {
   GENERATION_PLAN_SCHEMA_VERSION,
@@ -64,6 +64,76 @@ const GENERATION_JOB_STATUSES: readonly GenerationJobStatus[] = [
   "blocked",
   "cancelled"
 ];
+const GENERATION_JOB_ROLE_ALIASES: Record<string, GenerationJobRole> = {
+  anchor: "reference_anchor",
+  anchorimage: "reference_anchor",
+  base: "reference_anchor",
+  baseimage: "reference_anchor",
+  character: "character_anchor",
+  characteranchor: "character_anchor",
+  characterbase: "character_anchor",
+  characterimage: "character_anchor",
+  characterreference: "character_anchor",
+  characterseed: "character_anchor",
+  cover: "final_image",
+  coverimage: "final_image",
+  detail: "final_image",
+  detailimage: "final_image",
+  detailpage: "final_image",
+  final: "final_image",
+  finalimage: "final_image",
+  generatedimage: "final_image",
+  generateimage: "final_image",
+  generation: "final_image",
+  hero: "final_image",
+  heroimage: "final_image",
+  image: "final_image",
+  imagegeneration: "final_image",
+  intermediate: "reference_anchor",
+  intermediateimage: "reference_anchor",
+  listingimage: "final_image",
+  listingmainimage: "final_image",
+  main: "final_image",
+  mainimage: "final_image",
+  mainvisual: "final_image",
+  marketingimage: "final_image",
+  moodboard: "style_anchor",
+  output: "final_image",
+  outputgeneration: "final_image",
+  outputimage: "final_image",
+  page: "final_image",
+  pageimage: "final_image",
+  poster: "final_image",
+  posterimage: "final_image",
+  primary: "final_image",
+  primaryimage: "final_image",
+  product: "final_image",
+  productdetail: "final_image",
+  productdetailpage: "final_image",
+  producthero: "final_image",
+  productimage: "final_image",
+  reference: "reference_anchor",
+  referenceanchor: "reference_anchor",
+  referenceimage: "reference_anchor",
+  seedimage: "reference_anchor",
+  scene: "final_image",
+  sceneimage: "final_image",
+  sourceimage: "reference_anchor",
+  socialimage: "final_image",
+  socialpost: "final_image",
+  style: "style_anchor",
+  styleanchor: "style_anchor",
+  stylebase: "style_anchor",
+  styleguide: "style_anchor",
+  styleimage: "style_anchor",
+  stylemoodboard: "style_anchor",
+  stylereference: "style_anchor",
+  thumbnail: "final_image",
+  variation: "variation",
+  variationimage: "variation",
+  variant: "variation",
+  variantimage: "variation"
+};
 const GENERATION_REFERENCE_KINDS: readonly GenerationReferenceKind[] = ["selected_canvas_image", "generated_output"];
 const GENERATION_REFERENCE_USAGES: readonly GenerationReferenceUsage[] = [
   "subject",
@@ -125,6 +195,7 @@ export interface AgentPlannerInput {
   signal?: AbortSignal;
   now?: Date;
   runner?: GenerationPlanAgentRunner;
+  skillLoadout?: PlanningSkillLoadout;
 }
 
 export interface AgentPlannerConversationOutput {
@@ -218,8 +289,8 @@ export async function createGenerationPlan(input: AgentPlannerInput): Promise<Ag
   }
 
   const plannerOptions = normalizeAgentPlannerOptions(input.plannerOptions);
-  const planningSkillSelection = createPlanningSkillSelectionForRequest(userText);
-  const runner = input.runner ?? createDeepAgentsPlanner(input.llmConfig, plannerOptions, planningSkillSelection);
+  const planningSkillLoadout = input.skillLoadout ?? createBuiltInPlanningSkillLoadoutForRequest(userText);
+  const runner = input.runner ?? createDeepAgentsPlanner(input.llmConfig, plannerOptions, planningSkillLoadout);
   const now = input.now ?? new Date();
   const planId = `plan-${randomUUID()}`;
   const message = buildPlannerUserMessage({
@@ -230,7 +301,7 @@ export async function createGenerationPlan(input: AgentPlannerInput): Promise<Ag
     conversationContext: input.conversationContext
   });
 
-  const planningSkillFiles = createPlanningSkillFiles(now, planningSkillSelection);
+  const planningSkillFiles = createPlanningSkillFiles(now, planningSkillLoadout);
   const invokePlannerAttempt = async (
     messages: PlannerMessage[],
     attemptIndex: number
@@ -424,19 +495,19 @@ function emitAssistantDelta(onAssistantDelta: AgentPlannerInput["onAssistantDelt
 export function createDeepAgentsPlanner(
   config: UsableAgentLlmConfig,
   plannerOptions?: AgentPlannerOptions,
-  skillSelection?: PlanningSkillSelection
+  skillLoadout?: PlanningSkillLoadout
 ): GenerationPlanAgentRunner {
   const isDeepSeek = isDeepSeekAgentConfig(config);
   const model = createAgentChatModel(config, isDeepSeek, plannerOptions);
 
   if (isDeepSeek) {
-    return createDirectChatPlanner(model, skillSelection);
+    return createDirectChatPlanner(model, skillLoadout);
   }
 
   return createDeepAgent({
     model,
     skills: ["/skills/"],
-    systemPrompt: createPlanningSystemPrompt(skillSelection),
+    systemPrompt: createPlanningSystemPrompt(skillLoadout),
     tools: []
   }) as unknown as GenerationPlanAgentRunner;
 }
@@ -462,7 +533,7 @@ function createAgentChatModel(
 
 export function createDirectChatPlanner(
   model: ChatOpenAI,
-  skillSelection?: PlanningSkillSelection
+  skillLoadout?: PlanningSkillLoadout
 ): GenerationPlanAgentRunner {
   return {
     streamsThinkingDeltas: true,
@@ -471,7 +542,7 @@ export function createDirectChatPlanner(
         [
           {
             role: "system",
-            content: createDirectPlanningSystemPrompt(skillSelection)
+            content: createDirectPlanningSystemPrompt(skillLoadout)
           },
           ...input.messages
         ] as never,
@@ -533,11 +604,11 @@ function extractReasoningDeltasFromStreamChunk(chunk: unknown, seen: Set<string>
   return deltas;
 }
 
-function createDirectPlanningSystemPrompt(skillSelection?: PlanningSkillSelection): string {
+function createDirectPlanningSystemPrompt(skillLoadout?: PlanningSkillLoadout): string {
   return [
-    createPlanningSystemPrompt(skillSelection),
+    createPlanningSystemPrompt(skillLoadout),
     "The full built-in planning skills are embedded below for this single chat completion request.",
-    createEmbeddedPlanningSkillsPrompt(skillSelection)
+    createEmbeddedPlanningSkillsPrompt(skillLoadout)
   ].join("\n\n");
 }
 
@@ -2025,9 +2096,17 @@ function parseStylePresetId(value: unknown): StylePresetId | undefined {
 }
 
 function parseJobRole(value: unknown): GenerationJobRole | undefined {
-  return typeof value === "string" && GENERATION_JOB_ROLES.includes(value as GenerationJobRole)
-    ? (value as GenerationJobRole)
-    : undefined;
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const exact = value.trim();
+  if (GENERATION_JOB_ROLES.includes(exact as GenerationJobRole)) {
+    return exact as GenerationJobRole;
+  }
+
+  const normalized = normalizedOptionToken(value);
+  return normalized ? GENERATION_JOB_ROLE_ALIASES[normalized] : undefined;
 }
 
 function parseJobStatus(value: unknown): GenerationJobStatus | undefined {

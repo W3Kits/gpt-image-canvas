@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   Bot,
+  BookOpenCheck,
   BrainCircuit,
   Check,
   CheckCircle2,
@@ -63,6 +64,7 @@ import {
   isGenerationPlan,
   summarizeGenerationPlanOutputs
 } from "../agent/AgentPlanNodeShape";
+import { AgentSkillDialog } from "../agent/AgentSkillDialog";
 import { HomePage } from "../home/HomePage";
 import { ProviderConfigDialog } from "../provider-config/ProviderConfigDialog";
 import {
@@ -278,7 +280,18 @@ const promptStarters = [
     promptKey: "promptStarterCityPrompt"
   }
 ] as const;
-const quickSizePresetIds = new Set(["square-1k", "poster-portrait", "poster-landscape", "story-9-16", "video-16-9", "wide-2k"]);
+const DEFAULT_SIZE_PRESET_ID = "portrait-4k";
+const DEFAULT_SIZE_PRESET = SIZE_PRESETS.find((preset) => preset.id === DEFAULT_SIZE_PRESET_ID) ?? SIZE_PRESETS[0];
+const DEFAULT_IMAGE_QUALITY: ImageQuality = "high";
+const quickSizePresetIds = new Set([
+  "square-1k",
+  "poster-portrait",
+  "poster-landscape",
+  "story-9-16",
+  "video-16-9",
+  "wide-2k",
+  DEFAULT_SIZE_PRESET_ID
+]);
 const quickSizePresets = SIZE_PRESETS.filter((preset) => quickSizePresetIds.has(preset.id));
 const PRIMARY_GENERATION_COUNTS: readonly GenerationCount[] = [1, 2, 4];
 const EXTENDED_GENERATION_COUNTS: readonly GenerationCount[] = [8, 16];
@@ -2852,11 +2865,11 @@ export function App() {
   const [generationMode, setGenerationMode] = useState<GenerationMode>("text");
   const [prompt, setPrompt] = useState("");
   const [stylePreset, setStylePreset] = useState<StylePresetId>("none");
-  const [sizePresetId, setSizePresetId] = useState(SIZE_PRESETS[0].id);
-  const [width, setWidth] = useState(SIZE_PRESETS[0].width);
-  const [height, setHeight] = useState(SIZE_PRESETS[0].height);
+  const [sizePresetId, setSizePresetId] = useState(DEFAULT_SIZE_PRESET.id);
+  const [width, setWidth] = useState(DEFAULT_SIZE_PRESET.width);
+  const [height, setHeight] = useState(DEFAULT_SIZE_PRESET.height);
   const [count, setCount] = useState<GenerationCount>(1);
-  const [quality, setQuality] = useState<ImageQuality>("auto");
+  const [quality, setQuality] = useState<ImageQuality>(DEFAULT_IMAGE_QUALITY);
   const [outputFormat, setOutputFormat] = useState<OutputFormat>("png");
   const [activeGenerationCount, setActiveGenerationCount] = useState(0);
   const [isProjectLoaded, setIsProjectLoaded] = useState(false);
@@ -2874,6 +2887,7 @@ export function App() {
   const [isAiPanelOpen, setIsAiPanelOpen] = useState(false);
   const [isStorageDialogOpen, setIsStorageDialogOpen] = useState(false);
   const [isProviderConfigDialogOpen, setIsProviderConfigDialogOpen] = useState(false);
+  const [isAgentSkillDialogOpen, setIsAgentSkillDialogOpen] = useState(false);
   const [storageConfig, setStorageConfig] = useState<StorageConfigResponse | null>(null);
   const [authStatus, setAuthStatus] = useState<AuthStatusResponse | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
@@ -2889,10 +2903,10 @@ export function App() {
   const [isStorageSaving, setIsStorageSaving] = useState(false);
   const [isStorageTesting, setIsStorageTesting] = useState(false);
   const [referenceSelection, setReferenceSelection] = useState<ReferenceSelection>(() => missingReferenceSelection(t));
-  const [agentSizePresetId, setAgentSizePresetId] = useState(SIZE_PRESETS[0].id);
-  const [agentWidth, setAgentWidth] = useState(SIZE_PRESETS[0].width);
-  const [agentHeight, setAgentHeight] = useState(SIZE_PRESETS[0].height);
-  const [agentQuality, setAgentQuality] = useState<ImageQuality>("auto");
+  const [agentSizePresetId, setAgentSizePresetId] = useState(DEFAULT_SIZE_PRESET.id);
+  const [agentWidth, setAgentWidth] = useState(DEFAULT_SIZE_PRESET.width);
+  const [agentHeight, setAgentHeight] = useState(DEFAULT_SIZE_PRESET.height);
+  const [agentQuality, setAgentQuality] = useState<ImageQuality>(DEFAULT_IMAGE_QUALITY);
   const [agentOutputFormat, setAgentOutputFormat] = useState<OutputFormat>("png");
   const [agentInput, setAgentInput] = useState("");
   const [agentConfig, setAgentConfig] = useState<AgentLlmConfigView | null>(null);
@@ -2988,6 +3002,14 @@ export function App() {
     max: MAX_AGENT_SELECTED_REFERENCES
   });
   const agentReferenceCompactSummary = `${agentReferenceCount}/${MAX_AGENT_SELECTED_REFERENCES}`;
+  const agentSizePresetButtons = useMemo<SizePreset[]>(() => {
+    const selectedPreset = SIZE_PRESETS.find((item) => item.id === agentSizePresetId);
+    if (selectedPreset && !quickSizePresetIds.has(selectedPreset.id)) {
+      return [...quickSizePresets, selectedPreset];
+    }
+
+    return quickSizePresets;
+  }, [agentSizePresetId]);
 
   const trimmedPrompt = prompt.trim();
   const promptValidationMessage = prompt.trim() ? "" : t("promptRequired");
@@ -6322,6 +6344,16 @@ export function App() {
             </button>
             <div className="agent-chat-head__actions">
               <button
+                aria-label={t("agentSkillsOpen")}
+                className="agent-icon-button"
+                data-testid="agent-skills-open"
+                title={t("agentSkillsOpen")}
+                type="button"
+                onClick={() => setIsAgentSkillDialogOpen(true)}
+              >
+                <BookOpenCheck className="size-4" aria-hidden="true" />
+              </button>
+              <button
                 aria-label={t("agentConfigRefresh")}
                 className="agent-icon-button"
                 data-testid="agent-config-refresh"
@@ -6483,16 +6515,29 @@ export function App() {
                 <Settings className="size-3.5" aria-hidden="true" />
                 <span>{agentCompactSizeSummary}</span>
               </button>
-              <button className="agent-param-chip" title={agentQualitySummary} type="button" onClick={() => setIsAgentSettingsOpen((isOpen) => !isOpen)}>
+              <button
+                aria-expanded={isAgentSettingsOpen}
+                className="agent-param-chip"
+                title={agentQualitySummary}
+                type="button"
+                onClick={() => setIsAgentSettingsOpen((isOpen) => !isOpen)}
+              >
                 <Sparkles className="size-3.5" aria-hidden="true" />
                 <span>{agentQualitySummary}</span>
               </button>
-              <button className="agent-param-chip" title={agentFormatSummary} type="button" onClick={() => setIsAgentSettingsOpen((isOpen) => !isOpen)}>
+              <button
+                aria-expanded={isAgentSettingsOpen}
+                className="agent-param-chip"
+                title={agentFormatSummary}
+                type="button"
+                onClick={() => setIsAgentSettingsOpen((isOpen) => !isOpen)}
+              >
                 <ImageIcon className="size-3.5" aria-hidden="true" />
                 <span>{agentFormatSummary}</span>
               </button>
               {supportsAgentThinkingControls ? (
                 <button
+                  aria-expanded={isAgentSettingsOpen}
                   className="agent-param-chip"
                   data-testid="agent-thinking-chip"
                   title={agentThinkingSummary}
@@ -6504,6 +6549,7 @@ export function App() {
                 </button>
               ) : null}
               <button
+                aria-expanded={isAgentSettingsOpen}
                 className="agent-param-chip"
                 data-testid="agent-reference-state"
                 title={agentReferenceSummary}
@@ -6518,9 +6564,52 @@ export function App() {
 
           {isAgentSettingsOpen ? (
             <section className="agent-parameter-popover" aria-label={t("agentDefaultsTitle")} data-testid="agent-parameter-popover">
-              <div className="agent-parameter-popover__grid">
-                <label className="provider-field provider-field--span">
-                  <span>{t("generationSizeLabel")}</span>
+              <div className="agent-parameter-popover__header">
+                <div>
+                  <strong>{t("agentDefaultsTitle")}</strong>
+                  <span>
+                    {agentSizeSummary} / {agentQualitySummary} / {agentFormatSummary}
+                  </span>
+                </div>
+                <button className="agent-parameter-popover__close" type="button" aria-label={t("commonClose")} onClick={() => setIsAgentSettingsOpen(false)}>
+                  <X className="size-4" aria-hidden="true" />
+                </button>
+              </div>
+
+              <div className="agent-parameter-popover__section agent-parameter-popover__section--size">
+                <div className="agent-parameter-popover__section-head">
+                  <span className="control-label">{t("generationSizeLabel")}</span>
+                  <strong>{agentSizeSummary}</strong>
+                </div>
+                <div className="agent-size-preset-grid" data-testid="agent-size-preset-buttons">
+                  {agentSizePresetButtons.map((preset) => (
+                    <button
+                      aria-pressed={agentSizePresetId === preset.id}
+                      className="agent-size-preset-button"
+                      data-selected={agentSizePresetId === preset.id}
+                      key={preset.id}
+                      type="button"
+                      onClick={() => selectAgentSizePreset(preset.id)}
+                    >
+                      <span>{sizePresetLabel(preset, t)}</span>
+                      <small>
+                        {preset.width} x {preset.height}
+                      </small>
+                    </button>
+                  ))}
+                  <button
+                    aria-pressed={agentSizePresetId === CUSTOM_SIZE_PRESET_ID}
+                    className="agent-size-preset-button"
+                    data-selected={agentSizePresetId === CUSTOM_SIZE_PRESET_ID}
+                    type="button"
+                    onClick={() => selectAgentSizePreset(CUSTOM_SIZE_PRESET_ID)}
+                  >
+                    <span>{t("customSize")}</span>
+                    <small>{t("customSizeManual")}</small>
+                  </button>
+                </div>
+                <label className="agent-compact-field agent-compact-field--select">
+                  <span className="control-label">{t("generationAllSizes")}</span>
                   <select
                     className="field-control"
                     data-testid="agent-size-preset"
@@ -6535,62 +6624,69 @@ export function App() {
                     <option value={CUSTOM_SIZE_PRESET_ID}>{t("customSizeOption")}</option>
                   </select>
                 </label>
-                <label>
-                  <span className="control-label">{t("generationWidthLabel")}</span>
-                  <input
-                    className="field-control"
-                    data-testid="agent-width"
-                    max={MAX_IMAGE_DIMENSION}
-                    min={MIN_IMAGE_DIMENSION}
-                    step={1}
-                    type="number"
-                    value={Number.isNaN(agentWidth) ? "" : agentWidth}
-                    onChange={(event) => updateAgentWidth(event.target.value)}
-                  />
-                </label>
-                <label>
-                  <span className="control-label">{t("generationHeightLabel")}</span>
-                  <input
-                    className="field-control"
-                    data-testid="agent-height"
-                    max={MAX_IMAGE_DIMENSION}
-                    min={MIN_IMAGE_DIMENSION}
-                    step={1}
-                    type="number"
-                    value={Number.isNaN(agentHeight) ? "" : agentHeight}
-                    onChange={(event) => updateAgentHeight(event.target.value)}
-                  />
-                </label>
-                <label>
-                  <span className="control-label">{t("generationQualityLabel")}</span>
-                  <select
-                    className="field-control"
-                    data-testid="agent-quality"
-                    value={agentQuality}
-                    onChange={(event) => setAgentQuality(event.target.value as ImageQuality)}
-                  >
-                    {IMAGE_QUALITIES.map((item) => (
-                      <option key={item} value={item}>
-                        {t("qualityLabel", { quality: item })}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <span className="control-label">{t("generationOutputFormatLabel")}</span>
-                  <select
-                    className="field-control"
-                    data-testid="agent-format"
-                    value={agentOutputFormat}
-                    onChange={(event) => setAgentOutputFormat(event.target.value as OutputFormat)}
-                  >
-                    {OUTPUT_FORMATS.map((item) => (
-                      <option key={item} value={item}>
-                        {t("outputFormatLabel", { format: item })}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div className="agent-dimension-grid">
+                  <label className="agent-compact-field">
+                    <span className="control-label">{t("generationWidthLabel")}</span>
+                    <input
+                      className="field-control"
+                      data-testid="agent-width"
+                      max={MAX_IMAGE_DIMENSION}
+                      min={MIN_IMAGE_DIMENSION}
+                      step={1}
+                      type="number"
+                      value={Number.isNaN(agentWidth) ? "" : agentWidth}
+                      onChange={(event) => updateAgentWidth(event.target.value)}
+                    />
+                  </label>
+                  <label className="agent-compact-field">
+                    <span className="control-label">{t("generationHeightLabel")}</span>
+                    <input
+                      className="field-control"
+                      data-testid="agent-height"
+                      max={MAX_IMAGE_DIMENSION}
+                      min={MIN_IMAGE_DIMENSION}
+                      step={1}
+                      type="number"
+                      value={Number.isNaN(agentHeight) ? "" : agentHeight}
+                      onChange={(event) => updateAgentHeight(event.target.value)}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="agent-parameter-popover__section">
+                <div className="agent-output-grid">
+                  <label className="agent-compact-field">
+                    <span className="control-label">{t("generationQualityLabel")}</span>
+                    <select
+                      className="field-control"
+                      data-testid="agent-quality"
+                      value={agentQuality}
+                      onChange={(event) => setAgentQuality(event.target.value as ImageQuality)}
+                    >
+                      {IMAGE_QUALITIES.map((item) => (
+                        <option key={item} value={item}>
+                          {t("qualityLabel", { quality: item })}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="agent-compact-field">
+                    <span className="control-label">{t("generationOutputFormatLabel")}</span>
+                    <select
+                      className="field-control"
+                      data-testid="agent-format"
+                      value={agentOutputFormat}
+                      onChange={(event) => setAgentOutputFormat(event.target.value as OutputFormat)}
+                    >
+                      {OUTPUT_FORMATS.map((item) => (
+                        <option key={item} value={item}>
+                          {t("outputFormatLabel", { format: item })}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
               </div>
               {agentDefaultsValidationMessage ? (
                 <p className="agent-inline-warning" role="alert">
@@ -6749,6 +6845,8 @@ export function App() {
           onSelectConversation={selectAgentHistoryConversation}
         />
       ) : null}
+
+      {isAgentSkillDialogOpen ? <AgentSkillDialog onClose={() => setIsAgentSkillDialogOpen(false)} /> : null}
 
       {isStorageDialogOpen ? (
         <div className="app-modal-backdrop fixed inset-0 z-[3000] flex items-center justify-center bg-neutral-950/45 px-4 py-6" data-testid="storage-dialog">

@@ -78,6 +78,23 @@ export const agentConversations = sqliteTable("agent_conversations", {
   updatedAt: text("updated_at").notNull()
 });
 
+export const agentSkills = sqliteTable("agent_skills", {
+  id: text("id").primaryKey(),
+  slug: text("slug").notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  version: text("version"),
+  source: text("source"),
+  enabled: integer("enabled").notNull(),
+  builtIn: integer("built_in").notNull(),
+  required: integer("is_required").notNull(),
+  triggerMode: text("trigger_mode").notNull(),
+  triggerKeywordsJson: text("trigger_keywords_json").notNull(),
+  filesJson: text("files_json").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull()
+});
+
 export const codexOAuthTokens = sqliteTable("codex_oauth_tokens", {
   id: text("id").primaryKey(),
   accessToken: text("access_token"),

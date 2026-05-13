@@ -1,4 +1,5 @@
 import type { FileData } from "deepagents";
+import type { AgentSkillTriggerMode } from "../contracts.js";
 
 export const CANVAS_IMAGE_PLANNING_SKILL_VERSION = "canvas-image-planning@2" as const;
 export const CANVAS_IMAGE_PLANNING_SKILL_PATH = "/skills/canvas-image-planning/SKILL.md" as const;
@@ -9,6 +10,24 @@ export const ECOMMERCE_VISUAL_COPYWRITING_COMPLIANCE_RULES_PATH =
 
 export interface PlanningSkillSelection {
   includeEcommerce: boolean;
+}
+
+export interface PlanningSkillFile {
+  path: string;
+  content: string;
+}
+
+export interface PlanningSkillLoadoutSkill {
+  slug: string;
+  name: string;
+  version?: string;
+  required: boolean;
+  triggerMode: AgentSkillTriggerMode;
+  files: PlanningSkillFile[];
+}
+
+export interface PlanningSkillLoadout {
+  skills: PlanningSkillLoadoutSkill[];
 }
 
 const DEFAULT_PLANNING_SKILL_SELECTION: PlanningSkillSelection = {
@@ -299,15 +318,63 @@ export const ECOMMERCE_VISUAL_COPYWRITING_COMPLIANCE_RULES = `# 电商文案合�
 8. 提交平台预审，通过后再正式上线。
 `;
 
-export function createEmbeddedPlanningSkillsPrompt(selection?: PlanningSkillSelection): string {
+export function createBuiltInPlanningSkillLoadoutForRequest(userText: string): PlanningSkillLoadout {
+  return createBuiltInPlanningSkillLoadout(createPlanningSkillSelectionForRequest(userText));
+}
+
+export function createBuiltInPlanningSkillLoadout(selection?: PlanningSkillSelection): PlanningSkillLoadout {
   const normalizedSelection = normalizePlanningSkillSelection(selection);
-  const sections = [CANVAS_IMAGE_PLANNING_SKILL];
+  const skills = [createCorePlanningSkill()];
   if (normalizedSelection.includeEcommerce) {
-    sections.push(
-      ECOMMERCE_VISUAL_COPYWRITING_SKILL,
-      `# Reference: ${ECOMMERCE_VISUAL_COPYWRITING_COMPLIANCE_RULES_PATH}`,
-      ECOMMERCE_VISUAL_COPYWRITING_COMPLIANCE_RULES
-    );
+    skills.push(createEcommercePlanningSkill());
+  }
+
+  return { skills };
+}
+
+export function createCorePlanningSkill(): PlanningSkillLoadoutSkill {
+  return {
+    slug: "canvas-image-planning",
+    name: "canvas-image-planning",
+    version: CANVAS_IMAGE_PLANNING_SKILL_VERSION,
+    required: true,
+    triggerMode: "always",
+    files: [
+      {
+        path: CANVAS_IMAGE_PLANNING_SKILL_PATH,
+        content: CANVAS_IMAGE_PLANNING_SKILL
+      }
+    ]
+  };
+}
+
+export function createEcommercePlanningSkill(): PlanningSkillLoadoutSkill {
+  return {
+    slug: "ecommerce-visual-copywriting",
+    name: "ecommerce-visual-copywriting",
+    version: ECOMMERCE_VISUAL_COPYWRITING_SKILL_VERSION,
+    required: false,
+    triggerMode: "auto",
+    files: [
+      {
+        path: ECOMMERCE_VISUAL_COPYWRITING_SKILL_PATH,
+        content: ECOMMERCE_VISUAL_COPYWRITING_SKILL
+      },
+      {
+        path: ECOMMERCE_VISUAL_COPYWRITING_COMPLIANCE_RULES_PATH,
+        content: ECOMMERCE_VISUAL_COPYWRITING_COMPLIANCE_RULES
+      }
+    ]
+  };
+}
+
+export function createEmbeddedPlanningSkillsPrompt(input?: PlanningSkillLoadout | PlanningSkillSelection): string {
+  const loadout = normalizePlanningSkillLoadout(input);
+  const sections: string[] = [];
+  for (const skill of loadout.skills) {
+    for (const file of skill.files) {
+      sections.push(isSkillMarkdownFile(file.path) ? file.content : `# Reference: ${file.path}\n${file.content}`);
+    }
   }
 
   return sections.join("\n\n");
@@ -315,46 +382,40 @@ export function createEmbeddedPlanningSkillsPrompt(selection?: PlanningSkillSele
 
 export function createPlanningSkillFiles(
   now = new Date(),
-  selection?: PlanningSkillSelection
+  input?: PlanningSkillLoadout | PlanningSkillSelection
 ): Record<string, FileData> {
   const timestamp = now.toISOString();
-  const normalizedSelection = normalizePlanningSkillSelection(selection);
-  const files: Record<string, FileData> = {
-    [CANVAS_IMAGE_PLANNING_SKILL_PATH]: {
-      content: CANVAS_IMAGE_PLANNING_SKILL.split("\n"),
-      created_at: timestamp,
-      modified_at: timestamp
+  const loadout = normalizePlanningSkillLoadout(input);
+  const files: Record<string, FileData> = {};
+  for (const skill of loadout.skills) {
+    for (const file of skill.files) {
+      files[file.path] = {
+        content: file.content.split("\n"),
+        created_at: timestamp,
+        modified_at: timestamp
+      };
     }
-  };
-
-  if (normalizedSelection.includeEcommerce) {
-    files[ECOMMERCE_VISUAL_COPYWRITING_SKILL_PATH] = {
-      content: ECOMMERCE_VISUAL_COPYWRITING_SKILL.split("\n"),
-      created_at: timestamp,
-      modified_at: timestamp
-    };
-    files[ECOMMERCE_VISUAL_COPYWRITING_COMPLIANCE_RULES_PATH] = {
-      content: ECOMMERCE_VISUAL_COPYWRITING_COMPLIANCE_RULES.split("\n"),
-      created_at: timestamp,
-      modified_at: timestamp
-    };
   }
 
   return files;
 }
 
-export function createPlanningSystemPrompt(selection?: PlanningSkillSelection): string {
-  const normalizedSelection = normalizePlanningSkillSelection(selection);
+export function createPlanningSystemPrompt(input?: PlanningSkillLoadout | PlanningSkillSelection): string {
+  const loadout = normalizePlanningSkillLoadout(input);
+  const activeSkillVersions = loadout.skills
+    .map((skill) => skill.version || skill.name || skill.slug)
+    .filter(Boolean)
+    .join(", ");
   const lines = [
     "You are the gpt-image-canvas planning agent.",
-    `Use the built-in ${CANVAS_IMAGE_PLANNING_SKILL_VERSION} skill.`,
+    `Use the active Agent skills: ${activeSkillVersions}.`,
     "Your only task is to produce strict GenerationPlan JSON for the canvas.",
     "Do not call tools unless needed for your internal planning state.",
     "Do not expose filesystem, shell, database, or environment details.",
     "Return exactly one JSON object that follows the skill schema."
   ];
 
-  if (normalizedSelection.includeEcommerce) {
+  if (loadout.skills.some((skill) => skill.slug === "ecommerce-visual-copywriting")) {
     lines.splice(
       2,
       0,
@@ -363,4 +424,16 @@ export function createPlanningSystemPrompt(selection?: PlanningSkillSelection): 
   }
 
   return lines.join("\n");
+}
+
+function normalizePlanningSkillLoadout(input?: PlanningSkillLoadout | PlanningSkillSelection): PlanningSkillLoadout {
+  if (input && "skills" in input && Array.isArray(input.skills)) {
+    return input;
+  }
+
+  return createBuiltInPlanningSkillLoadout(input && "includeEcommerce" in input ? input : undefined);
+}
+
+function isSkillMarkdownFile(path: string): boolean {
+  return path.endsWith("/SKILL.md") || path === "SKILL.md";
 }

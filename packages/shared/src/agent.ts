@@ -27,6 +27,67 @@ export interface SaveAgentLlmConfigRequest {
   supportsVision: boolean;
 }
 
+export type AgentSkillTriggerMode = "always" | "auto";
+export type AgentSkillErrorCode =
+  | "agent_skill_duplicate_slug"
+  | "agent_skill_import_failed"
+  | "agent_skill_invalid_file"
+  | "agent_skill_not_found"
+  | "agent_skill_required"
+  | "invalid_agent_skill";
+
+export interface AgentSkillFile {
+  path: string;
+  content: string;
+}
+
+export interface AgentSkillSummary {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  version?: string;
+  source?: string;
+  enabled: boolean;
+  builtIn: boolean;
+  required: boolean;
+  triggerMode: AgentSkillTriggerMode;
+  triggerKeywords: string[];
+  fileCount: number;
+  hasLocalChanges: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentSkillDetail extends AgentSkillSummary {
+  files: AgentSkillFile[];
+}
+
+export interface AgentSkillListResponse {
+  skills: AgentSkillSummary[];
+}
+
+export interface SaveAgentSkillRequest {
+  slug?: string;
+  name: string;
+  description?: string;
+  version?: string;
+  source?: string;
+  enabled?: boolean;
+  triggerMode?: AgentSkillTriggerMode;
+  triggerKeywords?: string[];
+  files?: AgentSkillFile[];
+  resetToFactory?: boolean;
+}
+
+export interface SaveAgentSkillResponse {
+  skill: AgentSkillDetail;
+}
+
+export interface ImportAgentSkillResponse {
+  skill: AgentSkillDetail;
+}
+
 export type AgentThinkingType = "enabled" | "disabled";
 export type AgentReasoningEffort = "high" | "max";
 

@@ -2,7 +2,7 @@
 
 Generated documentation for the SQLite schema defined in `apps/api/src/infrastructure/schema.ts`.
 
-Last reviewed: 2026-05-09.
+Last reviewed: 2026-05-11.
 
 ## `projects`
 
@@ -89,6 +89,27 @@ Stores Agent planning model configuration.
 | `model` | text | Required planning model. |
 | `timeout_ms` | integer | Required timeout in milliseconds. |
 | `supports_vision` | integer | Required boolean flag stored as integer. |
+| `created_at` | text | Required ISO timestamp. |
+| `updated_at` | text | Required ISO timestamp. |
+
+## `agent_skills`
+
+Stores local-first Agent planning skills, including built-in seeded skills and user-created/imported skills.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | text | Primary key. |
+| `slug` | text | Required stable skill slug; unique index. |
+| `name` | text | Required display name. |
+| `description` | text | Required summary shown in the Skill Library. |
+| `version` | text | Optional skill version. |
+| `source` | text | Optional source URL or source note. |
+| `enabled` | integer | Required boolean flag stored as integer. |
+| `built_in` | integer | Required boolean flag for seeded skills. |
+| `is_required` | integer | Required boolean flag; required skills cannot be disabled. |
+| `trigger_mode` | text | Required trigger mode (`always` or `auto`). |
+| `trigger_keywords_json` | text | Required serialized keyword array for user-defined auto triggers. |
+| `files_json` | text | Required serialized map of `SKILL.md` and optional `references/**` text files. |
 | `created_at` | text | Required ISO timestamp. |
 | `updated_at` | text | Required ISO timestamp. |
 

@@ -237,12 +237,42 @@
 .app-root[data-canvas-theme="dark"] .agent-model-pill,
 .app-root[data-canvas-theme="dark"] .agent-icon-button,
 .app-root[data-canvas-theme="dark"] .agent-param-chip,
+.app-root[data-canvas-theme="dark"] .agent-parameter-popover__close,
+.app-root[data-canvas-theme="dark"] .agent-size-preset-button,
 .app-root[data-canvas-theme="dark"] .agent-plan-card__action,
 .app-root[data-canvas-theme="dark"] .agent-parameter-popover,
 .app-root[data-canvas-theme="dark"] .agent-send-or-cancel {
   border-color: var(--line);
   background: #161210;
   color: var(--ink);
+}
+
+.app-root[data-canvas-theme="dark"] .agent-parameter-popover__header {
+  border-color: var(--line);
+  background: linear-gradient(180deg, #1d1713 0%, #161210 100%);
+}
+
+.app-root[data-canvas-theme="dark"] .agent-parameter-popover__header strong {
+  color: var(--ink);
+}
+
+.app-root[data-canvas-theme="dark"] .agent-size-preset-button:hover,
+.app-root[data-canvas-theme="dark"] .agent-size-preset-button:focus-visible,
+.app-root[data-canvas-theme="dark"] .agent-parameter-popover__close:hover,
+.app-root[data-canvas-theme="dark"] .agent-parameter-popover__close:focus-visible {
+  border-color: rgb(198 95 50 / 0.35);
+  background: rgb(126 50 26 / 0.22);
+  color: #f8d8b1;
+}
+
+.app-root[data-canvas-theme="dark"] .agent-size-preset-button[data-selected="true"] {
+  border-color: rgb(45 212 191 / 0.34);
+  background: rgb(20 184 166 / 0.13);
+  color: #ccfbf1;
+}
+
+.app-root[data-canvas-theme="dark"] .agent-size-preset-button[data-selected="true"] small {
+  color: #99f6e4;
 }
 
 .app-root[data-canvas-theme="dark"] .agent-plan-card__status {

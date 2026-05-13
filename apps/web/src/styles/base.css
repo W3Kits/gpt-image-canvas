@@ -113,7 +113,10 @@ button {
 .provider-priority-item__rank,
 .provider-mini-row dd[data-masked="true"],
 .provider-secret-pill,
-.codex-device-code {
+.codex-device-code,
+.agent-size-preset-button small,
+.agent-parameter-popover__header span,
+.agent-parameter-popover__section-head strong {
   font-variant-numeric: tabular-nums;
 }
 
@@ -213,6 +216,8 @@ button {
 .agent-model-pill:not(:disabled):active,
 .agent-icon-button:not(:disabled):active,
 .agent-param-chip:not(:disabled):active,
+.agent-parameter-popover__close:not(:disabled):active,
+.agent-size-preset-button:not(:disabled):active,
 .agent-thinking-details__toggle:not(:disabled):active,
 .agent-thinking-controls__option:not(:disabled):active,
 .agent-history-list__item:not(:disabled):active,
@@ -369,6 +374,8 @@ a:focus-visible {
   .agent-model-pill:not(:disabled):active,
   .agent-icon-button:not(:disabled):active,
   .agent-param-chip:not(:disabled):active,
+  .agent-parameter-popover__close:not(:disabled):active,
+  .agent-size-preset-button:not(:disabled):active,
   .agent-thinking-details__toggle:not(:disabled):active,
   .agent-thinking-controls__option:not(:disabled):active,
   .agent-history-list__item:not(:disabled):active,

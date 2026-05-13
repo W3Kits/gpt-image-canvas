@@ -21,6 +21,7 @@ import {
   type StoredAgentGenerationPlan
 } from "./executor.js";
 import { createGenerationPlan, type AgentPlannerConversationContext } from "./planner.js";
+import { resolvePlanningSkillLoadoutForRequest } from "./skill-store.js";
 import { getStoredAssetFile, saveReferenceImageInput } from "../generation/image-generation.js";
 
 const OPEN_READY_STATE = 1;
@@ -501,6 +502,7 @@ async function handleAgentPlanMessage(
       conversationContext,
       plannerOptions: message.plannerOptions,
       llmConfig,
+      skillLoadout: resolvePlanningSkillLoadoutForRequest(message.text),
       onAssistantDelta: (delta) => {
         if (session.activeRun?.id !== activeRun.id || activeRun.cancelled) {
           return;

@@ -2,6 +2,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
+import { strToU8, zipSync } from "fflate";
 import WebSocket, { type RawData } from "ws";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
@@ -43,6 +44,7 @@ async function main(): Promise<void> {
       await smokeAgentWebSocket(port);
       await smokeAgentConversations(app, port, { getAgentConversationContext, saveAgentConversationContext });
       await smokeAgentConfig(app);
+      await smokeAgentSkills(app);
     } finally {
       closeAllAgentSessions("agent_smoke_shutdown");
       agentWebSocketServer.close();
@@ -366,6 +368,118 @@ async function smokeAgentConfig(app: RequestApp): Promise<void> {
   expect(preserved.body.supportsVision === false, "preserved save updates supportsVision");
 }
 
+async function smokeAgentSkills(app: RequestApp): Promise<void> {
+  const list = await requestJson(app, "/api/agent-skills");
+  expect(list.response.status === 200, "Agent skill list returns 200");
+  expect(Array.isArray(list.body.skills), "Agent skill list returns skills");
+  const skills = list.body.skills.filter(isRecord);
+  const core = skills.find((skill) => skill.slug === "canvas-image-planning");
+  const ecommerce = skills.find((skill) => skill.slug === "ecommerce-visual-copywriting");
+  expect(isRecord(core), "Agent skill list includes canvas planning skill");
+  expect(core.required === true && core.enabled === true, "core Agent skill is required and enabled");
+  expect(isRecord(ecommerce), "Agent skill list includes ecommerce skill");
+  expect(ecommerce.enabled === true && ecommerce.triggerMode === "auto", "ecommerce Agent skill is enabled auto");
+
+  const coreDetail = await requestJson(app, `/api/agent-skills/${String(core.id)}`);
+  expect(coreDetail.response.status === 200, "Agent skill detail returns 200");
+  expect(isRecord(coreDetail.body.skill) && Array.isArray(coreDetail.body.skill.files), "Agent skill detail includes files");
+
+  const disableCore = await requestJson(app, `/api/agent-skills/${String(core.id)}`, {
+    method: "PUT",
+    body: {
+      name: core.name,
+      enabled: false
+    }
+  });
+  expect(disableCore.response.status === 400, "required Agent skill cannot be disabled");
+  expect(isRecord(disableCore.body.error) && disableCore.body.error.code === "agent_skill_required", "core disable uses stable code");
+
+  const disableEcommerce = await requestJson(app, `/api/agent-skills/${String(ecommerce.id)}`, {
+    method: "PUT",
+    body: {
+      name: ecommerce.name,
+      enabled: false
+    }
+  });
+  expect(disableEcommerce.response.status === 200, "ecommerce Agent skill can be disabled");
+  expect(isRecord(disableEcommerce.body.skill) && disableEcommerce.body.skill.enabled === false, "ecommerce disable persists");
+
+  const custom = await requestJson(app, "/api/agent-skills", {
+    method: "POST",
+    body: {
+      slug: "smoke-brand-voice",
+      name: "Smoke Brand Voice",
+      description: "Smoke test custom skill.",
+      enabled: true,
+      triggerMode: "auto",
+      triggerKeywords: ["brand-voice"],
+      files: [
+        {
+          path: "SKILL.md",
+          content: "---\nname: smoke-brand-voice\ndescription: Smoke test custom skill.\n---\n# Smoke Brand Voice"
+        }
+      ]
+    }
+  });
+  expect(custom.response.status === 201, "custom Agent skill create returns 201");
+  expect(isRecord(custom.body.skill) && custom.body.skill.slug === "smoke-brand-voice", "custom Agent skill slug persists");
+
+  const customId = String(custom.body.skill.id);
+  const edited = await requestJson(app, `/api/agent-skills/${customId}`, {
+    method: "PUT",
+    body: {
+      name: "Smoke Brand Voice Edited",
+      description: "Edited custom skill.",
+      enabled: true,
+      triggerMode: "auto",
+      triggerKeywords: ["brand-voice", "catalog"],
+      files: [
+        {
+          path: "SKILL.md",
+          content: "---\nname: smoke-brand-voice\ndescription: Edited custom skill.\n---\n# Edited Brand Voice"
+        },
+        {
+          path: "references/tone.md",
+          content: "# Tone\nPlain and precise."
+        }
+      ]
+    }
+  });
+  expect(edited.response.status === 200, "custom Agent skill edit returns 200");
+  expect(isRecord(edited.body.skill) && edited.body.skill.fileCount === 2, "custom Agent skill file edit persists");
+
+  const importedMarkdown = await requestMultipart(app, "/api/agent-skills/import", formDataWithFile(
+    new File(
+      ["---\nname: Imported Markdown Skill\ndescription: Imported from markdown.\nmetadata:\n  version: \"1\"\n---\n# Imported"],
+      "imported-markdown-skill.md",
+      { type: "text/markdown" }
+    )
+  ));
+  expect(importedMarkdown.response.status === 201, "markdown Agent skill import returns 201");
+  expect(isRecord(importedMarkdown.body.skill) && importedMarkdown.body.skill.slug === "imported-markdown-skill", "markdown import uses metadata slug");
+
+  const zipBytes = zipSync({
+    "zip-skill/SKILL.md": strToU8(
+      "---\nname: Imported Zip Skill\ndescription: Imported from zip.\nmetadata:\n  version: \"1\"\n---\n# Imported Zip"
+    ),
+    "zip-skill/references/guide.md": strToU8("# Guide\nKeep it brief.")
+  });
+  const importedZip = await requestMultipart(app, "/api/agent-skills/import", formDataWithFile(
+    new File([arrayBufferFromUint8(zipBytes)], "imported-zip-skill.zip", { type: "application/zip" })
+  ));
+  expect(importedZip.response.status === 201, "zip Agent skill import returns 201");
+  expect(isRecord(importedZip.body.skill) && importedZip.body.skill.fileCount === 2, "zip import preserves reference files");
+
+  const badZip = zipSync({
+    "../SKILL.md": strToU8("# Bad Zip")
+  });
+  const rejected = await requestMultipart(app, "/api/agent-skills/import", formDataWithFile(
+    new File([arrayBufferFromUint8(badZip)], "bad-skill.zip", { type: "application/zip" })
+  ));
+  expect(rejected.response.status === 400, "invalid Agent skill upload is rejected");
+  expect(isRecord(rejected.body.error), "invalid upload returns error body");
+}
+
 async function requestJson(
   app: RequestApp,
   path: string,
@@ -379,6 +493,30 @@ async function requestJson(
   const body = (await response.json()) as unknown;
   expect(isRecord(body), `${path} response body is an object`);
   return { response, body };
+}
+
+async function requestMultipart(
+  app: RequestApp,
+  path: string,
+  formData: FormData
+): Promise<{ response: Response; body: Record<string, unknown> }> {
+  const response = await app.request(path, {
+    method: "POST",
+    body: formData
+  });
+  const body = (await response.json()) as unknown;
+  expect(isRecord(body), `${path} multipart response body is an object`);
+  return { response, body };
+}
+
+function formDataWithFile(file: File): FormData {
+  const formData = new FormData();
+  formData.set("file", file);
+  return formData;
+}
+
+function arrayBufferFromUint8(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
 async function openWebSocketProbe(url: string): Promise<WebSocketProbe> {

@@ -12,8 +12,9 @@ import {
   CANVAS_IMAGE_PLANNING_SKILL_PATH,
   ECOMMERCE_VISUAL_COPYWRITING_COMPLIANCE_RULES_PATH,
   ECOMMERCE_VISUAL_COPYWRITING_SKILL_PATH,
-  createPlanningSkillSelectionForRequest,
-  hasEcommercePlanningIntent
+  createBuiltInPlanningSkillLoadoutForRequest,
+  hasEcommercePlanningIntent,
+  type PlanningSkillLoadout
 } from "../domain/agent/planning-skill.js";
 import type { UsableAgentLlmConfig } from "../domain/agent/config.js";
 import type {
@@ -65,6 +66,8 @@ async function main(): Promise<void> {
   smokeReasoningExtraction();
   await smokeNonEcommerceRequestLoadsOnlyCanvasSkill();
   await smokeEcommerceRequestLoadsEcommerceSkill();
+  await smokeDisabledEcommerceSkillIsNotInjected();
+  await smokeCustomLoadoutSkillIsInjected();
   await smokeDirectPlannerUsesSelectedSkills();
   await smokePlannerQuestionOutput();
   await smokeMissingSelectedReferenceQuestion();
@@ -88,6 +91,7 @@ async function main(): Promise<void> {
   smokeModelUnsupportedSourceJobCountRejection();
   smokeModelOptionalOutputAliases();
   smokeModelReferenceAliases();
+  smokeModelJobRoleAliases();
 
   console.log("agent planner smoke checks passed");
 }
@@ -447,7 +451,9 @@ function smokeEcommerceSkillIntentDetection(): void {
     "product photography alone does not trigger ecommerce skill"
   );
   expect(
-    !createPlanningSkillSelectionForRequest("Add a short title to each selected image.").includeEcommerce,
+    !createBuiltInPlanningSkillLoadoutForRequest("Add a short title to each selected image.").skills.some(
+      (skill) => skill.slug === "ecommerce-visual-copywriting"
+    ),
     "generic image text edits do not trigger ecommerce skill"
   );
   expect(
@@ -574,11 +580,69 @@ async function smokeEcommerceRequestLoadsEcommerceSkill(): Promise<void> {
   );
 }
 
+async function smokeDisabledEcommerceSkillIsNotInjected(): Promise<void> {
+  const runner = capturingPlannerRunner(planFixture());
+  const result = await createGenerationPlan({
+    userText: "Create marketplace listing copy for this SKU.",
+    defaults,
+    selectedReferences: [],
+    llmConfig: llmConfigFixture(),
+    now,
+    runner,
+    skillLoadout: createBuiltInPlanningSkillLoadoutForRequest("Create a clean product render.")
+  });
+
+  expectPlannerOk(result, "disabled ecommerce planner request");
+  const files = runner.calls[0]?.files;
+  expect(isRecord(files), "disabled ecommerce planner receives skill files");
+  expect(CANVAS_IMAGE_PLANNING_SKILL_PATH in files, "disabled ecommerce planner still receives canvas skill");
+  expect(
+    !(ECOMMERCE_VISUAL_COPYWRITING_SKILL_PATH in files),
+    "disabled ecommerce planner does not receive ecommerce skill"
+  );
+}
+
+async function smokeCustomLoadoutSkillIsInjected(): Promise<void> {
+  const runner = capturingPlannerRunner(planFixture());
+  const skillLoadout: PlanningSkillLoadout = {
+    skills: [
+      ...createBuiltInPlanningSkillLoadoutForRequest("Create a clean product render.").skills,
+      {
+        slug: "brand-voice",
+        name: "brand-voice",
+        version: "brand-voice@1",
+        required: false,
+        triggerMode: "auto",
+        files: [
+          {
+            path: "/skills/brand-voice/SKILL.md",
+            content: "---\nname: brand-voice\ndescription: Keep copy plain.\n---\n# Brand Voice\nUse plain, concrete copy."
+          }
+        ]
+      }
+    ]
+  };
+  const result = await createGenerationPlan({
+    userText: "Use our brand-voice keyword and make a product image.",
+    defaults,
+    selectedReferences: [],
+    llmConfig: llmConfigFixture(),
+    now,
+    runner,
+    skillLoadout
+  });
+
+  expectPlannerOk(result, "custom skill planner request");
+  const files = runner.calls[0]?.files;
+  expect(isRecord(files), "custom skill planner receives skill files");
+  expect("/skills/brand-voice/SKILL.md" in files, "custom loadout skill is injected");
+}
+
 async function smokeDirectPlannerUsesSelectedSkills(): Promise<void> {
   const nonEcommerceModel = capturingStreamingModel([JSON.stringify(planFixture())]);
   const nonEcommerceRunner = createDirectChatPlanner(
     nonEcommerceModel,
-    createPlanningSkillSelectionForRequest("Create a clean product photography render.")
+    createBuiltInPlanningSkillLoadoutForRequest("Create a clean product photography render.")
   );
   await nonEcommerceRunner.invoke({
     messages: [
@@ -599,7 +663,7 @@ async function smokeDirectPlannerUsesSelectedSkills(): Promise<void> {
   const ecommerceModel = capturingStreamingModel([JSON.stringify(planFixture())]);
   const ecommerceRunner = createDirectChatPlanner(
     ecommerceModel,
-    createPlanningSkillSelectionForRequest("Create marketplace listing copy for this SKU.")
+    createBuiltInPlanningSkillLoadoutForRequest("Create marketplace listing copy for this SKU.")
   );
   await ecommerceRunner.invoke({
     messages: [
@@ -1273,6 +1337,50 @@ function smokeModelReferenceAliases(): void {
   expect(result.plan.jobs[1]?.references[0]?.jobId === "style_anchor", "sourceJobId alias maps to jobId");
   expect(result.plan.edges[0]?.fromJobId === "style_anchor", "edge from alias maps to fromJobId");
   expect(result.plan.edges[0]?.toJobId === "page_1", "edge to alias maps to toJobId");
+}
+
+function smokeModelJobRoleAliases(): void {
+  const result = validate(
+    planFixture({
+      jobs: [
+        jobFixture({
+          id: "hero_main",
+          role: "main_image",
+          prompt: "Create one polished ecommerce hero image."
+        }),
+        jobFixture({
+          id: "image_generation_job",
+          role: "image_generation",
+          prompt: "Create one generated listing image."
+        }),
+        jobFixture({
+          id: "style_reference",
+          role: "style_reference",
+          prompt: "Create one visible style reference image.",
+          count: 1
+        }),
+        jobFixture({
+          id: "base_reference",
+          role: "base_image",
+          prompt: "Create one visible generated source reference.",
+          count: 1
+        }),
+        jobFixture({
+          id: "hero_variant",
+          role: "variant",
+          prompt: "Create one alternate crop of the hero image."
+        })
+      ]
+    }),
+    []
+  );
+
+  expectOk(result, "model job role aliases are accepted");
+  expect(result.plan.jobs[0]?.role === "final_image", "main_image role maps to final_image");
+  expect(result.plan.jobs[1]?.role === "final_image", "image_generation role maps to final_image");
+  expect(result.plan.jobs[2]?.role === "style_anchor", "style_reference role maps to style_anchor");
+  expect(result.plan.jobs[3]?.role === "reference_anchor", "base_image role maps to reference_anchor");
+  expect(result.plan.jobs[4]?.role === "variation", "variant role maps to variation");
 }
 
 function validate(plan: Record<string, unknown>, references: AgentSelectedCanvasReference[]): GenerationPlanValidationResult {

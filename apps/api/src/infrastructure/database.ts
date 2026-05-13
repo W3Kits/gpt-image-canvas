@@ -116,6 +116,23 @@ CREATE TABLE IF NOT EXISTS agent_conversations (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS agent_skills (
+  id TEXT PRIMARY KEY NOT NULL,
+  slug TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  version TEXT,
+  source TEXT,
+  enabled INTEGER NOT NULL,
+  built_in INTEGER NOT NULL,
+  is_required INTEGER NOT NULL,
+  trigger_mode TEXT NOT NULL,
+  trigger_keywords_json TEXT NOT NULL,
+  files_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS codex_oauth_tokens (
   id TEXT PRIMARY KEY NOT NULL,
   access_token TEXT,
@@ -171,6 +188,7 @@ CREATE INDEX IF NOT EXISTS generation_outputs_asset_id_idx ON generation_outputs
 CREATE INDEX IF NOT EXISTS generation_reference_assets_generation_id_idx ON generation_reference_assets(generation_id);
 CREATE INDEX IF NOT EXISTS generation_reference_assets_asset_id_idx ON generation_reference_assets(asset_id);
 CREATE INDEX IF NOT EXISTS agent_conversations_updated_at_idx ON agent_conversations(updated_at);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_skills_slug_idx ON agent_skills(slug);
 `);
 
 ensureColumn("assets", "cloud_provider", "cloud_provider TEXT");
@@ -207,6 +225,17 @@ ensureColumn("agent_llm_configs", "base_url", "base_url TEXT NOT NULL DEFAULT ''
 ensureColumn("agent_llm_configs", "model", "model TEXT NOT NULL DEFAULT ''");
 ensureColumn("agent_llm_configs", "timeout_ms", "timeout_ms INTEGER NOT NULL DEFAULT 60000");
 ensureColumn("agent_llm_configs", "supports_vision", "supports_vision INTEGER NOT NULL DEFAULT 0");
+ensureColumn("agent_skills", "slug", "slug TEXT NOT NULL DEFAULT ''");
+ensureColumn("agent_skills", "name", "name TEXT NOT NULL DEFAULT ''");
+ensureColumn("agent_skills", "description", "description TEXT NOT NULL DEFAULT ''");
+ensureColumn("agent_skills", "version", "version TEXT");
+ensureColumn("agent_skills", "source", "source TEXT");
+ensureColumn("agent_skills", "enabled", "enabled INTEGER NOT NULL DEFAULT 1");
+ensureColumn("agent_skills", "built_in", "built_in INTEGER NOT NULL DEFAULT 0");
+ensureColumn("agent_skills", "is_required", "is_required INTEGER NOT NULL DEFAULT 0");
+ensureColumn("agent_skills", "trigger_mode", "trigger_mode TEXT NOT NULL DEFAULT 'auto'");
+ensureColumn("agent_skills", "trigger_keywords_json", "trigger_keywords_json TEXT NOT NULL DEFAULT '[]'");
+ensureColumn("agent_skills", "files_json", "files_json TEXT NOT NULL DEFAULT '{}'");
 
 migrateStorageConfigRows();
 backfillGenerationReferenceAssets();

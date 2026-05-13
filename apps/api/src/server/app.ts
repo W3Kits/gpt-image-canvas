@@ -6,6 +6,7 @@ import { runtimePaths } from "../infrastructure/runtime.js";
 import { errorResponse } from "./http/errors.js";
 import { registerAgentConfigRoutes } from "./routes/agent-config.js";
 import { registerAgentConversationRoutes } from "./routes/agent-conversations.js";
+import { registerAgentSkillRoutes } from "./routes/agent-skills.js";
 import { registerAgentWebSocketRoutes } from "./routes/agent-ws.js";
 import { registerAssetRoutes } from "./routes/assets.js";
 import { registerAuthRoutes } from "./routes/auth.js";
@@ -32,6 +33,7 @@ export function createApp(): Hono {
   registerProviderConfigRoutes(app);
   registerAgentConfigRoutes(app);
   registerAgentConversationRoutes(app);
+  registerAgentSkillRoutes(app);
   registerProjectRoutes(app);
   registerGalleryRoutes(app);
   registerStorageRoutes(app);
