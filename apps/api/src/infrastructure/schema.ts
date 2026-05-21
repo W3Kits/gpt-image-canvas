@@ -95,6 +95,35 @@ export const agentSkills = sqliteTable("agent_skills", {
   updatedAt: text("updated_at").notNull()
 });
 
+export const promptFavoriteGroups = sqliteTable("prompt_favorite_groups", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  sortOrder: integer("sort_order").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull()
+});
+
+export const promptFavorites = sqliteTable("prompt_favorites", {
+  id: text("id").primaryKey(),
+  sourceType: text("source_type").notNull(),
+  sourceId: text("source_id").notNull(),
+  groupId: text("group_id")
+    .notNull()
+    .references(() => promptFavoriteGroups.id),
+  title: text("title").notNull(),
+  prompt: text("prompt").notNull(),
+  model: text("model").notNull(),
+  mediaType: text("media_type").notNull(),
+  assetUrl: text("asset_url").notNull(),
+  imageWidth: integer("image_width"),
+  imageHeight: integer("image_height"),
+  sourceUrl: text("source_url"),
+  useCount: integer("use_count").notNull(),
+  lastUsedAt: text("last_used_at"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull()
+});
+
 export const codexOAuthTokens = sqliteTable("codex_oauth_tokens", {
   id: text("id").primaryKey(),
   accessToken: text("access_token"),

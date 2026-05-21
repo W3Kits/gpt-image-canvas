@@ -14,6 +14,8 @@ import { registerCoreRoutes } from "./routes/core.js";
 import { registerGalleryRoutes } from "./routes/gallery.js";
 import { registerImageRoutes } from "./routes/images.js";
 import { registerProjectRoutes } from "./routes/project.js";
+import { registerPromptFavoriteRoutes } from "./routes/prompt-favorites.js";
+import { registerPromptPoolRoutes } from "./routes/prompt-pool.js";
 import { registerProviderConfigRoutes } from "./routes/provider-config.js";
 import { registerStorageRoutes } from "./routes/storage.js";
 
@@ -36,6 +38,8 @@ export function createApp(): Hono {
   registerAgentSkillRoutes(app);
   registerProjectRoutes(app);
   registerGalleryRoutes(app);
+  registerPromptPoolRoutes(app);
+  registerPromptFavoriteRoutes(app);
   registerStorageRoutes(app);
   registerAssetRoutes(app);
   registerImageRoutes(app);
