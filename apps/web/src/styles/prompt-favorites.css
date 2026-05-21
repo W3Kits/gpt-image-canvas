@@ -827,8 +827,9 @@
   align-items: center;
 }
 
-.prompt-favorites-item__use {
+.prompt-favorites-item__actions .prompt-favorites-item__use {
   position: relative;
+  height: 1.82rem;
   min-width: 3.95rem;
   min-height: 1.82rem;
   border-radius: 7px;
@@ -838,7 +839,7 @@
   padding: 0 0.5rem;
 }
 
-.prompt-favorites-item__use::after {
+.prompt-favorites-item__actions .prompt-favorites-item__use::after {
   content: "";
   position: absolute;
   top: 50%;
@@ -848,7 +849,7 @@
   transform: translate(-50%, -50%);
 }
 
-.prompt-favorites-item__use svg,
+.prompt-favorites-item__actions .prompt-favorites-item__use svg,
 .prompt-favorites-item__actions .history-icon-action svg {
   width: 0.9rem;
   height: 0.9rem;
@@ -1093,7 +1094,8 @@
     gap: 0.28rem;
   }
 
-  .prompt-favorites-item__use {
+  .prompt-favorites-item__actions .prompt-favorites-item__use {
+    height: 1.85rem;
     min-width: 3.75rem;
     min-height: 1.85rem;
     padding: 0 0.42rem;
