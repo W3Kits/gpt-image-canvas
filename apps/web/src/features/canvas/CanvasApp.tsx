@@ -2098,6 +2098,17 @@ function agentWebSocketUrl(connectionId?: string | null, runId?: string | null, 
   return url.toString();
 }
 
+function isEmbeddedW3KitsPluginRuntime(): boolean {
+  const url = new URL(window.location.href);
+  return url.searchParams.get("pluginId") === "gpt-image-canvas" && url.pathname.includes("/plugins/runtime");
+}
+
+function embeddedAgentUnsupportedMessage(locale: Locale): string {
+  return locale === "zh-CN"
+    ? "当前嵌入式 W3Kits 插件包暂不支持 Agent 实时规划。"
+    : "Live Agent planning is not available in the embedded W3Kits plugin yet.";
+}
+
 function agentReferenceAssetId(reference: ReferenceSelectionItem, index: number): string {
   return reference.localAssetId ?? reference.assetId ?? `selected-canvas-image-${index + 1}`;
 }
@@ -5871,6 +5882,10 @@ export function App() {
   }
 
   function ensureAgentSocket(): Promise<WebSocket> {
+    if (isEmbeddedW3KitsPluginRuntime()) {
+      return Promise.reject(new Error(embeddedAgentUnsupportedMessage(locale)));
+    }
+
     const existingSocket = agentSocketRef.current;
     if (existingSocket?.readyState === WebSocket.OPEN) {
       startAgentSocketHeartbeat(existingSocket);
