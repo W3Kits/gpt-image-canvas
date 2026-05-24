@@ -66,8 +66,11 @@ export async function bootW3KitsWebContainerPlugin(options = {}) {
   }
 
   const env = mergeEnv(runtime, options.env || {});
-  const command = options.command || runtime.daemon?.startCommand || ["node", "__w3kits/webcontainer-runtime/apps/daemon/dist/cli.js", "--host", "0.0.0.0", "--port", String(DEFAULT_DAEMON_PORT)];
-  const process = await webcontainer.spawn(command[0], command.slice(1), { env });
+  const command =
+    options.command ||
+    runtime.daemon?.startCommand ||
+    ["node", "__w3kits/webcontainer-runtime/runtime/daemon/server.js", "--host", "0.0.0.0", "--port", String(DEFAULT_DAEMON_PORT)];
+  const process = await webcontainer.spawn(command[0], command.slice(1), { cwd: "/", env });
 
   process.output?.pipeTo?.(new WritableStream({
     write(chunk) {

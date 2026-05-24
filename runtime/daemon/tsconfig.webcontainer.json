@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "outDir": "../../.generated/webcontainer-runtime",
+    "rootDir": "../../",
+    "declaration": false,
+    "sourceMap": false,
+    "noEmit": false
+  },
+  "include": [
+    "../../runtime/daemon/server.ts",
+    "../../apps/web/src/lib/w3kits-runtime.ts",
+    "../../packages/shared/src/**/*.ts"
+  ]
+}

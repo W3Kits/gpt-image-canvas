@@ -1,37 +1,47 @@
 import { pathToFileURL } from "node:url";
-import { serve } from "@hono/node-server";
-import { closeAllAgentSessions } from "./domain/agent/websocket-session.js";
-import { closeDatabase } from "./infrastructure/database.js";
-import { serverConfig } from "./infrastructure/runtime.js";
-import { agentWebSocketServer, app } from "./server/app.js";
-
-export { agentWebSocketServer, app } from "./server/app.js";
 
 function isMainModule(): boolean {
   const entryUrl = process.argv[1] ? pathToFileURL(process.argv[1]).href : undefined;
   return entryUrl === import.meta.url;
 }
 
+const isW3KitsWebContainer = process.env.W3KITS_WEBCONTAINER === "1";
+
 if (isMainModule()) {
-  const server = serve(
-    {
-      fetch: app.fetch,
-      websocket: { server: agentWebSocketServer },
-      hostname: serverConfig.host,
-      port: serverConfig.port
-    },
-    (info) => {
-      console.log(`API listening at http://${info.address}:${info.port}`);
-    }
-  );
+  if (isW3KitsWebContainer) {
+    await import("../../../runtime/daemon/server.js");
+  } else {
+    const [{ serve }, agentRuntime, databaseRuntime, runtimeConfig, serverRuntime] = await Promise.all([
+      import("@hono/node-server"),
+      import("./domain/agent/websocket-session.js"),
+      import("./infrastructure/database.js"),
+      import("./infrastructure/runtime.js"),
+      import("./server/app.js")
+    ]);
 
-  const shutdown = (): void => {
-    closeAllAgentSessions("server_shutdown");
-    agentWebSocketServer.close();
-    closeDatabase();
-    server.close();
-  };
+    const server = serve(
+      {
+        fetch: serverRuntime.app.fetch,
+        websocket: { server: serverRuntime.agentWebSocketServer },
+        hostname: runtimeConfig.serverConfig.host,
+        port: runtimeConfig.serverConfig.port
+      },
+      (info) => {
+        console.log(`API listening at http://${info.address}:${info.port}`);
+      }
+    );
 
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
+    const shutdown = (): void => {
+      agentRuntime.closeAllAgentSessions("server_shutdown");
+      serverRuntime.agentWebSocketServer.close();
+      databaseRuntime.closeDatabase();
+      server.close();
+    };
+
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
+  }
 }
+
+export const app = undefined;
+export const agentWebSocketServer = undefined;
