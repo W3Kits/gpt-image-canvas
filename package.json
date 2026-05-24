@@ -1,6 +1,6 @@
 {
   "name": "@w3kits/plugin-gpt-image-canvas",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "private": false,
   "license": "MIT",
   "packageManager": "pnpm@9.14.2",
@@ -20,6 +20,7 @@
     "start": "pnpm --filter @gpt-image-canvas/api start",
     "pack:dry-run": "npm pack --json --dry-run",
     "pack:artifact": "npm pack --json",
+    "publish:r2": "node scripts/publish-r2-assets.mjs",
     "verify:w3kits-package": "node scripts/verify-w3kits-webcontainer-package.mjs"
   },
   "files": [

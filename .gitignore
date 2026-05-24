@@ -1,4 +1,6 @@
 node_modules/
+.generated/
+*.tgz
 .codex-temp/
 .env
 .env.*

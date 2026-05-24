@@ -54,12 +54,16 @@ assert(runtime.ai?.openaiBaseUrl === "https://w3kits.com/api/ai/openai/v1", "run
 assert(runtime.ai?.defaultImageModel === "gpt-image-2", "runtime manifest must declare gpt-image-2 as the default image model");
 assert(runtime.persistence?.authority === "w3kits-plugin-user-data", "runtime manifest must declare W3Kits plugin user data persistence");
 assert(runtime.persistence?.dataDir === "/home/agent/.config/gpt-image-canvas", "runtime manifest must pin the WebContainer data directory");
+assert(runtime.persistence?.diskRoot === "/home/agent/.config/gpt-image-canvas", "runtime manifest must pin the WebContainer disk root");
+assert(runtime.persistence?.flushPolicy?.intervalMs === 30000, "runtime manifest must declare the persistence flush interval");
 assert(runtime.unsupportedLocalOnlyFeatures?.error?.code === "unsupported_in_w3kits_webcontainer_v1", "runtime manifest must declare the unsupported local-only feature error code");
 
 assert(daemonServer.includes("handleW3KitsApiRequest"), "daemon server must route API requests through the packaged runtime handler");
 assert(daemonServer.includes("W3KITS_RUNTIME_SESSION_REQUEST"), "daemon server must answer runtime session bridge requests");
 assert(daemonServer.includes("W3KITS_STORAGE_WRITE"), "daemon server must persist runtime bridge storage writes");
 assert(daemonServer.includes("/home/agent/.config/gpt-image-canvas"), "daemon server must persist state under the stable WebContainer data directory");
+assert(launcher.includes("startWebContainerAutosave"), "browser-daemon.js must flush WebContainer state through the disk route");
+assert(launcher.includes("/webcontainer/disk/files"), "browser-daemon.js must target the WebContainer disk file route");
 assert(daemonServer.includes("daemonFetch"), "daemon server must provide a runtime fetch adapter");
 assert(daemonServer.includes("staticResponseForUrl"), "daemon server must resolve packaged static assets for runtime API handlers");
 assert(runtimeModule.includes("GET /api/provider-config"), "runtime API handler must serve /api/provider-config");

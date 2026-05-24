@@ -99,6 +99,12 @@ fs.writeFileSync(
       persistence: {
         authority: "w3kits-plugin-user-data",
         dataDir: "/home/agent/.config/gpt-image-canvas",
+        diskRoot: "/home/agent/.config/gpt-image-canvas",
+        flushPolicy: {
+          intervalMs: 30000,
+          lifecycleEvents: ["visibilitychange", "pagehide", "daemon-ready", "run-complete", "daemon-stop", "daemon-crash"],
+        },
+        include: ["state/**", "assets/**", "gallery/**"],
       },
       unsupportedLocalOnlyFeatures: {
         error: {

@@ -14,6 +14,7 @@
 - builds a browser daemon entry under `dist/browser-daemon.js`
 - runs the plugin API inside the WebContainer daemon instead of relying on browser-side `fetch` fallback
 - routes OpenAI-compatible requests through `W3KITS_OPENAI_BASE_URL`
+- persists WebContainer daemon state through `/home/agent/.config/gpt-image-canvas`
 - keeps the upstream standalone API app out of the WebContainer package because native `better-sqlite3` and `sharp` still block direct boot there
 - verifies the W3Kits package shape before publish
 

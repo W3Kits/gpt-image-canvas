@@ -612,7 +612,10 @@ function shouldUseFallbackResponse(request: Request, response: Response): boolea
 
 async function readState(runtime: RuntimeLike): Promise<W3KitsRuntimeState> {
   const project = await readJsonState(runtime, W3KITS_PROJECT_KEY, W3KITS_PROJECT_PATH, defaultProjectState());
-  const providerConfig = await readJsonState(runtime, W3KITS_PROVIDER_CONFIG_KEY, W3KITS_PROVIDER_CONFIG_PATH, defaultProviderConfig());
+  const providerConfig = normalizeRuntimeProviderConfig(
+    await readJsonState(runtime, W3KITS_PROVIDER_CONFIG_KEY, W3KITS_PROVIDER_CONFIG_PATH, defaultProviderConfig(runtime)),
+    runtime
+  );
   const storageConfig = await readJsonState(runtime, W3KITS_STORAGE_CONFIG_KEY, W3KITS_STORAGE_CONFIG_PATH, defaultStorageConfig());
   const agentConfig = await readJsonState(runtime, W3KITS_AGENT_CONFIG_KEY, W3KITS_AGENT_CONFIG_PATH, defaultAgentConfig());
   const authStatus = await readJsonState(
@@ -656,9 +659,10 @@ function saveProjectState(current: ProjectState, body: { name?: string; snapshot
   };
 }
 
-function defaultProviderConfig(): ProviderConfigResponse {
+function defaultProviderConfig(runtime?: RuntimeLike): ProviderConfigResponse {
   const sourceOrder: ProviderSourceId[] = [...PROVIDER_SOURCE_IDS];
-  const sources = providerSourcesForConfig(undefined);
+  const sources = providerSourcesForConfig(undefined, isRuntimeManagedOpenAi(runtime));
+  const activeSource = sources.find((source) => sourceOrder.includes(source.id) && source.available);
   return {
     sourceOrder,
     sources,
@@ -668,14 +672,14 @@ function defaultProviderConfig(): ProviderConfigResponse {
       model: IMAGE_MODEL,
       timeoutMs: 20 * 60 * 1000
     },
-    activeSource: undefined
+    activeSource: activeSource ? providerSourceSummary(activeSource) : undefined
   };
 }
 
 function saveProviderConfigState(current: ProviderConfigResponse, body: SaveProviderConfigRequest): ProviderConfigResponse {
   const sourceOrder = normalizeProviderSourceOrder(body.sourceOrder);
   const localOpenAI = resolveLocalOpenAIConfig(current.localOpenAI, body);
-  const sources = providerSourcesForConfig(localOpenAI);
+  const sources = providerSourcesForConfig(localOpenAI, hasRuntimeManagedOpenAiSource(current));
   const activeSource = sources.find((source) => sourceOrder.includes(source.id) && source.available);
 
   return {
@@ -686,21 +690,42 @@ function saveProviderConfigState(current: ProviderConfigResponse, body: SaveProv
   };
 }
 
-function providerSourcesForConfig(localOpenAI: ProviderConfigResponse["localOpenAI"] | undefined): ProviderSourceView[] {
+function normalizeRuntimeProviderConfig(config: ProviderConfigResponse, runtime: RuntimeLike): ProviderConfigResponse {
+  if (!isRuntimeManagedOpenAi(runtime)) return config;
+  const sources = providerSourcesForConfig(config.localOpenAI, true);
+  const sourceOrder = normalizeProviderSourceOrder(config.sourceOrder);
+  const activeSource = sources.find((source) => sourceOrder.includes(source.id) && source.available);
+  return {
+    ...config,
+    sourceOrder,
+    sources,
+    activeSource: activeSource ? providerSourceSummary(activeSource) : undefined
+  };
+}
+
+function isRuntimeManagedOpenAi(runtime: RuntimeLike | undefined): boolean {
+  return Boolean(runtime && isW3KitsRuntime(runtime));
+}
+
+function hasRuntimeManagedOpenAiSource(config: ProviderConfigResponse): boolean {
+  return Boolean(config.sources.find((source) => source.id === "env-openai" && source.available));
+}
+
+function providerSourcesForConfig(localOpenAI: ProviderConfigResponse["localOpenAI"] | undefined, runtimeManagedOpenAi = false): ProviderSourceView[] {
   const localAvailable = Boolean(localOpenAI?.apiKey.hasSecret);
   return [
     {
       id: "env-openai",
       kind: "environment",
-      label: "Environment OpenAI API",
-      available: false,
-      status: "missing_api_key",
+      label: runtimeManagedOpenAi ? "W3Kits OpenAI-compatible API" : "Environment OpenAI API",
+      available: runtimeManagedOpenAi,
+      status: runtimeManagedOpenAi ? "available" : "missing_api_key",
       details: {
         baseUrl: getDefaultOpenAiBaseUrl(),
         model: IMAGE_MODEL,
         timeoutMs: 20 * 60 * 1000
       },
-      secret: { hasSecret: false }
+      secret: { hasSecret: runtimeManagedOpenAi }
     },
     {
       id: "local-openai",
