@@ -34,6 +34,55 @@ function bytesSignature(bytes) {
   return bytes.byteLength + ":" + (hash >>> 0).toString(16);
 }
 
+function stableHash(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function stableDaemonPort(basePort, seed) {
+  if (!seed) return basePort;
+  const offset = stableHash(seed) % 2000;
+  return Math.min(65000, basePort + offset);
+}
+
+function resolveDaemonPort(runtime, options = {}) {
+  const envPort = Number(options.env?.W3KITS_DAEMON_PORT);
+  if (Number.isFinite(envPort) && envPort > 0) return envPort;
+  const optionPort = Number(options.port);
+  if (Number.isFinite(optionPort) && optionPort > 0) return optionPort;
+  const basePort = runtime.daemon?.port || DEFAULT_DAEMON_PORT;
+  return stableDaemonPort(basePort, options.windowId || options.pluginId || runtime.pluginId || "");
+}
+
+function commandWithPort(command, port) {
+  const next = [...command];
+  const portIndex = next.indexOf("--port");
+  if (portIndex >= 0) {
+    next[portIndex + 1] = String(port);
+    return next;
+  }
+  return [...next, "--port", String(port)];
+}
+
+function appendLogLine(logBuffer, chunk) {
+  const text = String(chunk);
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    logBuffer.push(trimmed);
+    if (logBuffer.length > 30) logBuffer.shift();
+  }
+}
+
+function daemonStartError(code, logBuffer) {
+  const suffix = logBuffer.length ? `: ${logBuffer.slice(-8).join(" | ")}` : "";
+  return new Error(`w3kits_gpt_image_canvas_daemon_exit:${code ?? "unknown"}${suffix}`);
+}
+
 function assertCrossOriginIsolated() {
   if (typeof globalThis.crossOriginIsolated !== "undefined" && !globalThis.crossOriginIsolated) {
     throw new Error("w3kits_webcontainer_requires_cross_origin_isolation");
@@ -47,15 +96,27 @@ async function loadRuntimeManifest(manifestPath = DEFAULT_RUNTIME_MANIFEST_PATH,
   return response.json();
 }
 
-async function waitForServerReady(webcontainer, expectedPort, timeoutMs) {
+async function waitForServerReady(webcontainer, process, expectedPort, timeoutMs, logBuffer) {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("w3kits_gpt_image_canvas_daemon_start_timeout")), timeoutMs);
-    const dispose = webcontainer.on("server-ready", (port, url) => {
-      if (port !== expectedPort) return;
+    let settled = false;
+    let dispose;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
       dispose?.();
-      resolve(url);
+      callback(value);
+    };
+    const timeout = setTimeout(() => {
+      finish(reject, new Error(`w3kits_gpt_image_canvas_daemon_start_timeout:${expectedPort}${logBuffer.length ? `: ${logBuffer.slice(-8).join(" | ")}` : ""}`));
+    }, timeoutMs);
+    dispose = webcontainer.on("server-ready", (port, url) => {
+      if (port !== expectedPort) return;
+      finish(resolve, url);
     });
+    process.exit?.then((code) => {
+      finish(reject, daemonStartError(code, logBuffer));
+    }).catch((error) => finish(reject, error));
   });
 }
 
@@ -215,19 +276,25 @@ export async function bootW3KitsWebContainerPlugin(options = {}) {
   await ensureDataDir(webcontainer, runtime, options);
 
   const env = mergeEnv(runtime, options.env || {});
-  const command =
+  const baseCommand =
     options.command ||
     runtime.daemon?.startCommand ||
     ["node", "__w3kits/webcontainer-runtime/runtime/daemon/server.js", "--host", "0.0.0.0", "--port", String(DEFAULT_DAEMON_PORT)];
+  const daemonPort = resolveDaemonPort(runtime, options);
+  const command = commandWithPort(baseCommand, daemonPort);
+  env.W3KITS_DAEMON_PORT = String(daemonPort);
+  options.onLog?.(`[w3kits] starting GPT Image Canvas daemon on port ${daemonPort}`);
   const process = await webcontainer.spawn(command[0], command.slice(1), { cwd: "/", env });
+  const logBuffer = [];
 
   process.output?.pipeTo?.(new WritableStream({
     write(chunk) {
+      appendLogLine(logBuffer, chunk);
       options.onLog?.(String(chunk));
     },
   })).catch((error) => options.onError?.(error));
 
-  const daemonUrl = await waitForServerReady(webcontainer, runtime.daemon?.port || DEFAULT_DAEMON_PORT, options.startTimeoutMs || 30000);
+  const daemonUrl = await waitForServerReady(webcontainer, process, daemonPort, options.startTimeoutMs || 30000, logBuffer);
   const autosave = startWebContainerAutosave(webcontainer, runtime, options);
   return {
     webcontainer,
