@@ -1159,7 +1159,7 @@ async function handleGenerateImageRequest(
   } catch (error) {
     if (isLoginRequiredError(error)) {
       requestW3KitsLogin(runtime, "ai_request");
-      return jsonError(401, "login_required", error instanceof Error ? error.message : "Sign in required before using W3Kits AI.");
+      return jsonError(401, "login_required", error instanceof Error ? error.message : "Sign in required before using the OpenAI-compatible provider.");
     }
 
     return jsonError(502, "upstream_failure", error instanceof Error ? error.message : "Image generation failed.");
@@ -1470,7 +1470,7 @@ function builtInAgentSkillDefinitions(): BuiltInAgentSkillDefinition[] {
       files: [
         {
           path: "SKILL.md",
-          content: "# canvas-image-planning\n\nTurn an image request into a concrete generation plan for the shared W3Kits canvas runtime.\n"
+          content: "# canvas-image-planning\n\nTurn an image request into a concrete generation plan for this image canvas runtime.\n"
         }
       ]
     },
@@ -2224,7 +2224,7 @@ function normalizeOpenAiImageResponse(payload: unknown): Array<{ b64Json: string
 
 function toGenerationError(payload: unknown, status: number): Error {
   if (isLoginRequiredPayload(payload, status)) {
-    return new Error("Sign in required before using W3Kits AI.");
+    return new Error("Sign in required before using the OpenAI-compatible provider.");
   }
 
   const message =
