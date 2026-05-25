@@ -55,10 +55,6 @@ const W3KITS_BRIDGE_VERSION = 1;
 const W3KITS_RESPONSE = "W3KITS_RESPONSE";
 const W3KITS_AUTH_REQUIRED = "W3KITS_AUTH_REQUIRED";
 const W3KITS_RUNTIME_SESSION_REQUEST = "W3KITS_RUNTIME_SESSION_REQUEST";
-const W3KITS_STORAGE_READ = "W3KITS_STORAGE_READ";
-const W3KITS_STORAGE_WRITE = "W3KITS_STORAGE_WRITE";
-const W3KITS_STORAGE_DELETE = "W3KITS_STORAGE_DELETE";
-const W3KITS_STORAGE_SYNC = "W3KITS_STORAGE_SYNC";
 const W3KITS_PROJECT_KEY = "gpt-image-canvas.w3kits.project";
 const W3KITS_PROVIDER_CONFIG_KEY = "gpt-image-canvas.w3kits.provider-config";
 const W3KITS_STORAGE_CONFIG_KEY = "gpt-image-canvas.w3kits.storage-config";
@@ -123,6 +119,14 @@ interface StorageReadResult {
   body?: string;
 }
 
+interface W3KitsObjectFacadeStorage {
+  type: "w3kits-vfs-object-facade";
+  endpoint: string;
+  bucket: string;
+  visibleConfigDir?: string;
+  auth?: { mode?: string; header?: string };
+}
+
 interface W3KitsRuntimeSession {
   token: string;
   expiresIn: number;
@@ -133,6 +137,7 @@ interface W3KitsRuntimeSession {
   openaiBaseUrl: string;
   runtimeSessionHeader: string;
   identityHeaders: Record<string, string | undefined>;
+  storage?: W3KitsObjectFacadeStorage;
 }
 
 interface StoredAssetRecord {
@@ -576,11 +581,12 @@ function shouldInterceptApiRequest(request: Request): boolean {
 }
 
 function shouldUseFallbackResponse(request: Request, response: Response): boolean {
-  if (response.ok) {
-    return false;
-  }
-
   const path = new URL(request.url, "http://localhost").pathname;
+  const isKnownFallbackPath = (knownPath: string) => knownPath === path;
+  const isKnownFallbackPrefix = (prefix: string) => path.startsWith(prefix);
+  const contentType = response.headers.get("content-type") || "";
+  const isHtmlFallback = response.ok && contentType.toLowerCase().includes("text/html");
+
   const fallbackPaths = new Set([
     "/api/health",
     "/api/config",
@@ -606,8 +612,9 @@ function shouldUseFallbackResponse(request: Request, response: Response): boolea
   ]);
 
   const fallbackPrefixes = ["/api/generations/", "/api/gallery/", "/api/assets/", "/api/prompt-favorites/", "/api/prompt-favorite-groups/", "/api/agent-skills/", "/api/agent-conversations/"];
+  const knownFallbackApi = Array.from(fallbackPaths).some(isKnownFallbackPath) || fallbackPrefixes.some(isKnownFallbackPrefix);
 
-  return (fallbackPaths.has(path) || fallbackPrefixes.some((prefix) => path.startsWith(prefix))) && (response.status === 404 || response.status >= 500);
+  return knownFallbackApi && (response.status === 404 || response.status >= 500 || isHtmlFallback);
 }
 
 async function readState(runtime: RuntimeLike): Promise<W3KitsRuntimeState> {
@@ -1984,37 +1991,76 @@ function bridgeRequest<T>(runtime: RuntimeLike, message: Record<string, unknown>
   });
 }
 
+function w3kitsObjectStorage(session: W3KitsRuntimeSession): W3KitsObjectFacadeStorage {
+  const storage = session.storage;
+  if (!storage || storage.type !== "w3kits-vfs-object-facade" || !storage.endpoint || !storage.bucket) {
+    throw new Error("w3kits_object_facade_unavailable");
+  }
+  return storage;
+}
+
+function w3kitsObjectUrl(runtime: RuntimeLike, storage: W3KitsObjectFacadeStorage, path: string, options: { formatJson?: boolean; sync?: boolean } = {}): string {
+  const normalizedPath = String(path || "").replace(/^\/+/, "");
+  const key = normalizedPath.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+  const endpoint = storage.endpoint.replace(/\/+$/, "");
+  const base = new URL(endpoint + "/" + encodeURIComponent(storage.bucket) + (key ? "/" + key : ""), getW3KitsParentOrigin(runtime));
+  if (options.formatJson) base.searchParams.set("format", "json");
+  if (options.sync) {
+    base.searchParams.set("sync", "1");
+    base.searchParams.set("format", "json");
+  }
+  return base.toString();
+}
+
+function w3kitsObjectHeaders(session: W3KitsRuntimeSession, contentType?: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    [session.runtimeSessionHeader || "x-w3kits-runtime-session"]: session.token,
+    "x-w3kits-plugin-id": session.pluginId || W3KITS_PLUGIN_ID,
+    "x-w3kits-plugin-version": session.pluginVersion
+  };
+  if (contentType) headers["Content-Type"] = contentType;
+  for (const [key, value] of Object.entries(session.identityHeaders || {})) {
+    if (typeof value === "string" && value) headers[key] = value;
+  }
+  if (session.packageName) headers["x-w3kits-plugin-package"] = session.packageName;
+  if (session.packageIntegrity) headers["x-w3kits-plugin-integrity"] = session.packageIntegrity;
+  return headers;
+}
 async function readW3KitsStorage(runtime: RuntimeLike, path: string): Promise<StorageReadResult | null> {
   try {
-    return await bridgeRequest<StorageReadResult>(runtime, {
-      type: W3KITS_STORAGE_READ,
-      pluginId: W3KITS_PLUGIN_ID,
-      path
+    const session = await getW3KitsRuntimeSession(runtime);
+    const storage = w3kitsObjectStorage(session);
+    const response = await runtime.fetch(w3kitsObjectUrl(runtime, storage, path), {
+      headers: w3kitsObjectHeaders(session)
     });
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(await response.text().catch(() => "w3kits_storage_read_failed"));
+    return { body: await response.text() };
   } catch (error) {
-    if (isNotFoundError(error)) {
-      return null;
-    }
-
+    if (isNotFoundError(error)) return null;
     throw error;
   }
 }
 
 async function writeW3KitsStorage(runtime: RuntimeLike, path: string, body: string, contentType: string): Promise<void> {
-  await bridgeRequest(runtime, {
-    type: W3KITS_STORAGE_WRITE,
-    pluginId: W3KITS_PLUGIN_ID,
-    path,
-    body,
-    contentType
+  const session = await getW3KitsRuntimeSession(runtime);
+  const storage = w3kitsObjectStorage(session);
+  const response = await runtime.fetch(w3kitsObjectUrl(runtime, storage, path, { formatJson: true }), {
+    method: "PUT",
+    headers: w3kitsObjectHeaders(session, contentType),
+    body
   });
+  if (!response.ok) throw new Error(await response.text().catch(() => "w3kits_storage_write_failed"));
 }
 
 async function syncW3KitsStorage(runtime: RuntimeLike): Promise<void> {
-  await bridgeRequest(runtime, {
-    type: W3KITS_STORAGE_SYNC,
-    pluginId: W3KITS_PLUGIN_ID
+  const session = await getW3KitsRuntimeSession(runtime);
+  const storage = w3kitsObjectStorage(session);
+  const response = await runtime.fetch(w3kitsObjectUrl(runtime, storage, "", { sync: true }), {
+    method: "POST",
+    headers: w3kitsObjectHeaders(session)
   });
+  if (!response.ok) throw new Error(await response.text().catch(() => "w3kits_storage_sync_failed"));
 }
 
 async function getW3KitsRuntimeSession(runtime: RuntimeLike): Promise<W3KitsRuntimeSession> {
@@ -2331,11 +2377,14 @@ async function readStoredAssetRecord(runtime: RuntimeLike, assetId: string): Pro
 }
 
 async function deleteW3KitsStorage(runtime: RuntimeLike, path: string): Promise<void> {
-  await bridgeRequest(runtime, {
-    type: W3KITS_STORAGE_DELETE,
-    pluginId: W3KITS_PLUGIN_ID,
-    path
+  const session = await getW3KitsRuntimeSession(runtime);
+  const storage = w3kitsObjectStorage(session);
+  const response = await runtime.fetch(w3kitsObjectUrl(runtime, storage, path, { formatJson: true }), {
+    method: "DELETE",
+    headers: w3kitsObjectHeaders(session)
   });
+  if (response.status === 404) return;
+  if (!response.ok) throw new Error(await response.text().catch(() => "w3kits_storage_delete_failed"));
 }
 
 const CRC32_TABLE = buildCrc32Table();

@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { handleW3KitsApiRequest } from "../../apps/web/src/lib/w3kits-runtime.js";
 
@@ -7,6 +7,8 @@ const DEFAULT_HOST = "0.0.0.0";
 const DEFAULT_PORT = 7462;
 const STATIC_ROOT = process.cwd();
 const DATA_ROOT = process.env.W3KITS_DATA_DIR || "/home/agent/.config/gpt-image-canvas";
+const OBJECT_FACADE_ENDPOINT = process.env.W3KITS_OBJECT_FACADE_ENDPOINT || "";
+const OBJECT_FACADE_BUCKET = process.env.W3KITS_OBJECT_FACADE_BUCKET || "";
 
 const CONTENT_TYPES: Record<string, string> = {
   ".css": "text/css;charset=UTF-8",
@@ -111,14 +113,10 @@ function parseArgs(argv: string[]) {
   return options;
 }
 
-function resolveStoragePath(relativePath: string): string {
-  const normalized = relativePath.replace(/^\/+/, "");
-  const resolved = path.resolve(DATA_ROOT, normalized);
-  if (!resolved.startsWith(path.resolve(DATA_ROOT))) {
-    throw new Error("invalid_storage_path");
-  }
-  return resolved;
+function objectFacadeAvailable(): boolean {
+  return Boolean(OBJECT_FACADE_ENDPOINT && OBJECT_FACADE_BUCKET && process.env.W3KITS_RUNTIME_SESSION);
 }
+
 
 async function handleBridgeMessage(message: BridgeMessage, targetOrigin: string): Promise<void> {
   const response = await createBridgeResponse(message);
@@ -145,25 +143,6 @@ async function createBridgeResponse(message: BridgeMessage): Promise<unknown> {
 
   try {
     switch (message.type) {
-      case "W3KITS_STORAGE_READ": {
-        if (!message.path) return error("invalid_path", "Missing storage path.");
-        const body = await readFile(resolveStoragePath(message.path), "utf8");
-        return ok({ body });
-      }
-      case "W3KITS_STORAGE_WRITE": {
-        if (!message.path) return error("invalid_path", "Missing storage path.");
-        const target = resolveStoragePath(message.path);
-        await mkdir(path.dirname(target), { recursive: true });
-        await writeFile(target, message.body ?? "", "utf8");
-        return ok({ ok: true });
-      }
-      case "W3KITS_STORAGE_DELETE": {
-        if (!message.path) return error("invalid_path", "Missing storage path.");
-        await rm(resolveStoragePath(message.path), { force: true });
-        return ok({ ok: true });
-      }
-      case "W3KITS_STORAGE_SYNC":
-        return ok({ ok: true });
       case "W3KITS_RUNTIME_SESSION_REQUEST":
         return ok({
           token: process.env.W3KITS_RUNTIME_SESSION || "",
@@ -173,11 +152,18 @@ async function createBridgeResponse(message: BridgeMessage): Promise<unknown> {
           packageName: process.env.W3KITS_PLUGIN_PACKAGE || "",
           packageIntegrity: process.env.W3KITS_PLUGIN_INTEGRITY || "",
           openaiBaseUrl: process.env.W3KITS_OPENAI_BASE_URL || "https://w3kits.com/api/ai/openai/v1",
-          runtimeSessionHeader: "X-W3Kits-Runtime-Session",
+          runtimeSessionHeader: "x-w3kits-runtime-session",
           identityHeaders: {
             "x-w3kits-plugin-id": process.env.W3KITS_PLUGIN_ID || "gpt-image-canvas",
             "x-w3kits-plugin-version": process.env.W3KITS_PLUGIN_VERSION || "",
           },
+          storage: objectFacadeAvailable() ? {
+            type: "w3kits-vfs-object-facade",
+            endpoint: OBJECT_FACADE_ENDPOINT,
+            bucket: OBJECT_FACADE_BUCKET,
+            visibleConfigDir: DATA_ROOT,
+            auth: { mode: "runtime-bearer", header: "x-w3kits-runtime-session" },
+          } : undefined,
         });
       default:
         return ok({ ok: true });

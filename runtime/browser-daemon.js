@@ -121,6 +121,7 @@ async function waitForServerReady(webcontainer, process, expectedPort, timeoutMs
 }
 
 function mergeEnv(runtime, inputEnv = {}) {
+  const storage = runtime.disk?.storage || runtime.storage || {};
   return {
     ...inputEnv,
     HOME: inputEnv.HOME || "/home/agent",
@@ -129,6 +130,9 @@ function mergeEnv(runtime, inputEnv = {}) {
     W3KITS_LOCALE: inputEnv.W3KITS_LOCALE || "en",
     W3KITS_OPENAI_BASE_URL: inputEnv.W3KITS_OPENAI_BASE_URL || runtime.ai?.openaiBaseUrl || "",
     W3KITS_RUNTIME_SESSION: inputEnv.W3KITS_RUNTIME_SESSION || "",
+    W3KITS_OBJECT_FACADE_ENDPOINT: inputEnv.W3KITS_OBJECT_FACADE_ENDPOINT || storage.endpoint || "",
+    W3KITS_OBJECT_FACADE_BUCKET: inputEnv.W3KITS_OBJECT_FACADE_BUCKET || storage.bucket || "",
+    W3KITS_PARENT_ORIGIN: inputEnv.W3KITS_PARENT_ORIGIN || globalThis.location?.origin || "https://w3kits.com",
     W3KITS_PLUGIN_ID: inputEnv.W3KITS_PLUGIN_ID || runtime.pluginId || "gpt-image-canvas",
     W3KITS_PLUGIN_VERSION: inputEnv.W3KITS_PLUGIN_VERSION || "",
     W3KITS_PLUGIN_PACKAGE: inputEnv.W3KITS_PLUGIN_PACKAGE || "",

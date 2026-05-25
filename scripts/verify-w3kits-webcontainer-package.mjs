@@ -27,6 +27,8 @@ const runtimeModule = readText("__w3kits/webcontainer-runtime/apps/web/src/lib/w
 assert(launcher.includes("bootW3KitsWebContainerPlugin"), "browser-daemon.js must export the WebContainer boot adapter");
 assert(launcher.includes("w3kits_gpt_image_canvas_daemon_start_timeout"), "browser-daemon.js must declare the GPT Image Canvas start timeout");
 assert(launcher.includes("W3KITS_OPENAI_BASE_URL"), "browser-daemon.js must pass the W3Kits OpenAI base URL");
+assert(launcher.includes("W3KITS_OBJECT_FACADE_ENDPOINT"), "browser-daemon.js must pass the W3Kits object facade endpoint");
+assert(launcher.includes("W3KITS_OBJECT_FACADE_BUCKET"), "browser-daemon.js must pass the W3Kits object facade bucket");
 assert(launcher.includes("w3kitsParentOrigin"), "browser-daemon.js must propagate the parent origin");
 assert(launcher.includes("w3kitsLocale"), "browser-daemon.js must propagate locale");
 assert(launcher.includes("webcontainer.spawn"), "browser-daemon.js must start the daemon through WebContainer spawn");
@@ -60,7 +62,7 @@ assert(runtime.unsupportedLocalOnlyFeatures?.error?.code === "unsupported_in_w3k
 
 assert(daemonServer.includes("handleW3KitsApiRequest"), "daemon server must route API requests through the packaged runtime handler");
 assert(daemonServer.includes("W3KITS_RUNTIME_SESSION_REQUEST"), "daemon server must answer runtime session bridge requests");
-assert(daemonServer.includes("W3KITS_STORAGE_WRITE"), "daemon server must persist runtime bridge storage writes");
+assert(daemonServer.includes("w3kits-vfs-object-facade"), "daemon server must expose the W3Kits object facade storage descriptor");
 assert(daemonServer.includes("/home/agent/.config/gpt-image-canvas"), "daemon server must persist state under the stable WebContainer data directory");
 assert(launcher.includes("startWebContainerAutosave"), "browser-daemon.js must flush WebContainer state through the disk route");
 assert(launcher.includes("/webcontainer/disk/files"), "browser-daemon.js must target the WebContainer disk file route");
