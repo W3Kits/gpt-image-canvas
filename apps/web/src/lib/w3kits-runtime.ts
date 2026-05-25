@@ -205,6 +205,13 @@ export function installW3KitsFetchFallback(runtime: RuntimeLike): void {
       return nativeFetch(input, init);
     }
 
+    if (shouldHandleInW3KitsRuntime(request)) {
+      const runtimeResponse = await handleW3KitsApiRequest(request, runtime);
+      if (runtimeResponse) {
+        return runtimeResponse;
+      }
+    }
+
     try {
       const response = await nativeFetch(input, init);
       if (shouldUseFallbackResponse(request, response)) {
@@ -580,14 +587,21 @@ function shouldInterceptApiRequest(request: Request): boolean {
   return new URL(request.url, "http://localhost").pathname.startsWith("/api/");
 }
 
+function shouldHandleInW3KitsRuntime(request: Request): boolean {
+  const path = new URL(request.url, "http://localhost").pathname;
+  return isKnownW3KitsRuntimeApiPath(path);
+}
+
 function shouldUseFallbackResponse(request: Request, response: Response): boolean {
   const path = new URL(request.url, "http://localhost").pathname;
-  const isKnownFallbackPath = (knownPath: string) => knownPath === path;
-  const isKnownFallbackPrefix = (prefix: string) => path.startsWith(prefix);
   const contentType = response.headers.get("content-type") || "";
   const isHtmlFallback = response.ok && contentType.toLowerCase().includes("text/html");
 
-  const fallbackPaths = new Set([
+  return isKnownW3KitsRuntimeApiPath(path) && (response.status === 404 || response.status >= 500 || isHtmlFallback);
+}
+
+function knownW3KitsRuntimeApiPaths(): Set<string> {
+  return new Set([
     "/api/health",
     "/api/config",
     "/api/project",
@@ -610,11 +624,15 @@ function shouldUseFallbackResponse(request: Request, response: Response): boolea
     "/api/images/generate",
     "/api/images/edit"
   ]);
+}
 
-  const fallbackPrefixes = ["/api/generations/", "/api/gallery/", "/api/assets/", "/api/prompt-favorites/", "/api/prompt-favorite-groups/", "/api/agent-skills/", "/api/agent-conversations/"];
-  const knownFallbackApi = Array.from(fallbackPaths).some(isKnownFallbackPath) || fallbackPrefixes.some(isKnownFallbackPrefix);
+function knownW3KitsRuntimeApiPrefixes(): string[] {
+  return ["/api/generations/", "/api/gallery/", "/api/assets/", "/api/prompt-favorites/", "/api/prompt-favorite-groups/", "/api/agent-skills/", "/api/agent-conversations/"];
+}
 
-  return knownFallbackApi && (response.status === 404 || response.status >= 500 || isHtmlFallback);
+function isKnownW3KitsRuntimeApiPath(path: string): boolean {
+  const isKnownFallbackPrefix = (prefix: string) => path.startsWith(prefix);
+  return knownW3KitsRuntimeApiPaths().has(path) || knownW3KitsRuntimeApiPrefixes().some(isKnownFallbackPrefix);
 }
 
 async function readState(runtime: RuntimeLike): Promise<W3KitsRuntimeState> {
