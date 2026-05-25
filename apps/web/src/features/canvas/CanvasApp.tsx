@@ -2105,8 +2105,8 @@ function isEmbeddedW3KitsPluginRuntime(): boolean {
 
 function embeddedAgentUnsupportedMessage(locale: Locale): string {
   return locale === "zh-CN"
-    ? "当前嵌入式 W3Kits 插件包暂不支持 Agent 实时规划。"
-    : "Live Agent planning is not available in the embedded W3Kits plugin yet.";
+    ? "当前嵌入式插件包暂不支持 Agent 实时规划。"
+    : "Live Agent planning is not available in the embedded plugin yet.";
 }
 
 function agentReferenceAssetId(reference: ReferenceSelectionItem, index: number): string {

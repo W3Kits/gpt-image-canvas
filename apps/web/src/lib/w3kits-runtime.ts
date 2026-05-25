@@ -279,7 +279,7 @@ export async function handleW3KitsApiRequest(request: Request, runtime: RuntimeL
       return jsonResponse(nextStorageConfig);
     }
     case "POST /api/storage/config/test":
-      return jsonResponse({ ok: true, message: "W3Kits cache storage is available." } satisfies StorageTestResult);
+      return jsonResponse({ ok: true, message: "Plugin cache storage is available." } satisfies StorageTestResult);
     case "GET /api/agent-config":
       return jsonResponse(state.agentConfig);
     case "PUT /api/agent-config": {
@@ -302,9 +302,9 @@ export async function handleW3KitsApiRequest(request: Request, runtime: RuntimeL
       return jsonResponse({ ok: true, auth: nextAuth } satisfies CodexLogoutResponse);
     }
     case "POST /api/auth/codex/device/start":
-      return jsonError(501, "unsupported_provider_behavior", "Codex login is not available in the W3Kits cache fallback.");
+      return jsonError(501, "unsupported_provider_behavior", "Codex login is not available in the plugin cache fallback.");
     case "POST /api/auth/codex/device/poll":
-      return jsonResponse({ status: "denied", message: "Codex login is not available in the W3Kits cache fallback." } satisfies CodexDevicePollResponse);
+      return jsonResponse({ status: "denied", message: "Codex login is not available in the plugin cache fallback." } satisfies CodexDevicePollResponse);
     case "GET /api/gallery":
       return jsonResponse(buildGalleryResponse(state.project));
     case "GET /api/pool":
@@ -717,7 +717,7 @@ function providerSourcesForConfig(localOpenAI: ProviderConfigResponse["localOpen
     {
       id: "env-openai",
       kind: "environment",
-      label: runtimeManagedOpenAi ? "W3Kits OpenAI-compatible API" : "Environment OpenAI API",
+      label: runtimeManagedOpenAi ? "OpenAI-compatible API" : "Environment OpenAI API",
       available: runtimeManagedOpenAi,
       status: runtimeManagedOpenAi ? "available" : "missing_api_key",
       details: {
@@ -1601,7 +1601,7 @@ async function importAgentSkillState(request: Request, skills: AgentSkillDetail[
 
   const lowerName = file.name.toLowerCase();
   if (lowerName.endsWith(".zip")) {
-    throw new Error("Zip skill bundles are not supported in the W3Kits browser fallback yet.");
+    throw new Error("Zip skill bundles are not supported in the browser fallback yet.");
   }
 
   const content = await file.text();
@@ -2127,7 +2127,7 @@ async function generateRecordViaW3Kits(
 
 async function generateImagesViaW3Kits(runtime: RuntimeLike, requestBody: GenerateImageRequest): Promise<{ images: Array<{ b64Json: string }> }> {
   if (!isW3KitsRuntime(runtime)) {
-    throw new Error("Image generation fallback requires the embedded W3Kits runtime.");
+    throw new Error("Image generation fallback requires the embedded plugin runtime.");
   }
 
   const response = await runtime.fetch(`${getDefaultOpenAiBaseUrl()}/images/generations`, {
@@ -2153,7 +2153,7 @@ async function generateImagesViaW3Kits(runtime: RuntimeLike, requestBody: Genera
 
 async function editImagesViaW3Kits(runtime: RuntimeLike, requestBody: EditImageRequest): Promise<{ images: Array<{ b64Json: string }> }> {
   if (!isW3KitsRuntime(runtime)) {
-    throw new Error("Image editing fallback requires the embedded W3Kits runtime.");
+    throw new Error("Image editing fallback requires the embedded plugin runtime.");
   }
 
   const references = requestBody.referenceImages?.length

@@ -1,10 +1,10 @@
 {
   "name": "@w3kits/plugin-gpt-image-canvas",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "private": false,
   "license": "MIT",
   "packageManager": "pnpm@9.14.2",
-  "description": "W3Kits GPT Image Canvas plugin adapted from mrslimslim/gpt-image-canvas.",
+  "description": "GPT Image Canvas plugin adapted from mrslimslim/gpt-image-canvas.",
   "engines": {
     "node": ">=22.12.0"
   },
