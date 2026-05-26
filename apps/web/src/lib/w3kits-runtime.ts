@@ -74,6 +74,7 @@ const W3KITS_AGENT_CONVERSATIONS_PATH = "state/agent-conversations.json";
 const W3KITS_ASSET_DIR = "assets";
 const W3KITS_PROMPT_POOL_BUNDLE_PATH = "/__w3kits/prompt-pool/prompts-all.json";
 const W3KITS_PROMPT_POOL_SUMMARY_PATH = "/__w3kits/prompt-pool/summary.json";
+const MAX_OPENAI_IMAGE_BYTES = 50 * 1024 * 1024;
 
 type Locale = "zh-CN" | "en";
 
@@ -2212,7 +2213,7 @@ async function generateImagesViaW3Kits(runtime: RuntimeLike, requestBody: Genera
     throw toGenerationError(payload, response.status);
   }
 
-  return { images: normalizeOpenAiImageResponse(payload) };
+  return { images: await normalizeOpenAiImageResponse(runtime, payload) };
 }
 
 async function editImagesViaW3Kits(runtime: RuntimeLike, requestBody: EditImageRequest): Promise<{ images: Array<{ b64Json: string }> }> {
@@ -2256,7 +2257,7 @@ async function editImagesViaW3Kits(runtime: RuntimeLike, requestBody: EditImageR
     throw toGenerationError(payload, response.status);
   }
 
-  return { images: normalizeOpenAiImageResponse(payload) };
+  return { images: await normalizeOpenAiImageResponse(runtime, payload) };
 }
 
 function effectivePromptForRequest(requestBody: GenerateImageRequest | EditImageRequest): string {
@@ -2269,21 +2270,142 @@ function effectivePromptForRequest(requestBody: GenerateImageRequest | EditImage
   return `${prompt}\n\nStyle direction: ${preset.prompt}`;
 }
 
-function normalizeOpenAiImageResponse(payload: unknown): Array<{ b64Json: string }> {
+async function normalizeOpenAiImageResponse(runtime: RuntimeLike, payload: unknown): Promise<Array<{ b64Json: string }>> {
   const data = isRecord(payload) && Array.isArray(payload.data) ? payload.data : [];
-  const images = data.flatMap((item) => {
-    if (!isRecord(item)) {
-      return [];
-    }
+  const images = await Promise.all(
+    data.map(async (item) => {
+      if (!isRecord(item)) {
+        return null;
+      }
 
-    return typeof item.b64_json === "string" && item.b64_json ? [{ b64Json: item.b64_json }] : [];
-  });
+      return imageFromOpenAiResponseItem(runtime, item);
+    })
+  );
+  const normalizedImages = images.filter((image): image is { b64Json: string } => Boolean(image?.b64Json));
 
-  if (images.length === 0) {
-    throw new Error("OpenAI image response did not include base64 image data.");
+  if (normalizedImages.length === 0) {
+    throw new Error(`OpenAI image response did not include usable image data. ${describeOpenAiImageResponse(payload)}`);
   }
 
-  return images;
+  return normalizedImages;
+}
+
+async function imageFromOpenAiResponseItem(runtime: RuntimeLike, item: Record<string, unknown>): Promise<{ b64Json: string } | null> {
+  const b64Json = readStringValue(item.b64_json) || readStringValue(item.b64Json);
+  if (b64Json) {
+    return { b64Json };
+  }
+
+  const url = readStringValue(item.url);
+  if (!url) {
+    return null;
+  }
+
+  return { b64Json: await downloadOpenAiImageUrl(runtime, url) };
+}
+
+async function downloadOpenAiImageUrl(runtime: RuntimeLike, url: string): Promise<string> {
+  const parsedUrl = parseOpenAiImageUrl(url);
+  if (!parsedUrl) {
+    throw new Error("OpenAI image response included an unsupported image URL.");
+  }
+
+  if (parsedUrl.protocol === "data:") {
+    return imageDataUrlToBase64(url);
+  }
+
+  const response = await runtime.fetch(parsedUrl);
+  if (!response.ok) {
+    throw new Error(`OpenAI image URL download failed with ${response.status}.`);
+  }
+
+  const contentType = response.headers.get("content-type");
+  if (!isOpenAiImageContentType(contentType)) {
+    throw new Error("OpenAI image URL returned non-image content.");
+  }
+
+  const contentLength = parseContentLength(response.headers.get("content-length"));
+  if (contentLength !== undefined && contentLength > MAX_OPENAI_IMAGE_BYTES) {
+    throw new Error("OpenAI image URL returned an image that is too large.");
+  }
+
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.length > MAX_OPENAI_IMAGE_BYTES) {
+    throw new Error("OpenAI image URL returned an image that is too large.");
+  }
+  if (!isOpenAiImageBytes(bytes)) {
+    throw new Error("OpenAI image URL returned unrecognized image content.");
+  }
+
+  return bytesToBase64(bytes);
+}
+
+function parseOpenAiImageUrl(url: string): URL | undefined {
+  try {
+    const parsedUrl = new URL(url);
+    return parsedUrl.protocol === "https:" || parsedUrl.protocol === "http:" || parsedUrl.protocol === "data:" ? parsedUrl : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function imageDataUrlToBase64(url: string): string {
+  const match = /^data:image\/[^;,]+;base64,(.+)$/u.exec(url);
+  if (!match) {
+    throw new Error("OpenAI image response included an unsupported data URL.");
+  }
+
+  return match[1];
+}
+
+function isOpenAiImageContentType(value: string | null): boolean {
+  if (!value) {
+    return true;
+  }
+
+  const contentType = value.split(";")[0]?.trim().toLowerCase();
+  return Boolean(contentType?.startsWith("image/") || contentType === "application/octet-stream");
+}
+
+function isOpenAiImageBytes(bytes: Uint8Array): boolean {
+  return isPng(bytes) || isJpeg(bytes) || isWebp(bytes);
+}
+
+function isPng(bytes: Uint8Array): boolean {
+  return bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a;
+}
+
+function isJpeg(bytes: Uint8Array): boolean {
+  return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+}
+
+function isWebp(bytes: Uint8Array): boolean {
+  return bytes.length >= 12 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50;
+}
+
+function parseContentLength(value: string | null): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function describeOpenAiImageResponse(payload: unknown): string {
+  if (!isRecord(payload) || !Array.isArray(payload.data)) {
+    return "Response did not include a data array.";
+  }
+
+  const itemDescriptions = payload.data.slice(0, 3).map((item, index) => {
+    if (!isRecord(item)) {
+      return `data[${index}] is ${typeof item}`;
+    }
+
+    const keys = Object.keys(item).sort();
+    return `data[${index}] keys: ${keys.length > 0 ? keys.join(", ") : "none"}`;
+  });
+  return itemDescriptions.length > 0 ? itemDescriptions.join("; ") : "Response data array was empty.";
 }
 
 function toGenerationError(payload: unknown, status: number): Error {
@@ -2376,6 +2498,15 @@ function base64ToBytes(value: string): Uint8Array {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
 }
 
 function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
