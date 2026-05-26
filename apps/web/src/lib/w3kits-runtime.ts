@@ -74,6 +74,7 @@ const W3KITS_AGENT_CONVERSATIONS_PATH = "state/agent-conversations.json";
 const W3KITS_ASSET_DIR = "assets";
 const W3KITS_PROMPT_POOL_BUNDLE_PATH = "/__w3kits/prompt-pool/prompts-all.json";
 const W3KITS_PROMPT_POOL_SUMMARY_PATH = "/__w3kits/prompt-pool/summary.json";
+const W3KITS_STATE_READ_CACHE_TTL_MS = 2_000;
 
 type Locale = "zh-CN" | "en";
 
@@ -167,6 +168,8 @@ interface BuiltInAgentSkillDefinition {
 
 const fallbackInstalledFlag = Symbol.for("gpt-image-canvas.w3kits-fallback-installed");
 let cachedRuntimeSession: { value: W3KitsRuntimeSession; expiresAt: number } | null = null;
+const jsonStateReadCache = new Map<string, { value: unknown; expiresAt: number }>();
+const jsonStateReadInflight = new Map<string, Promise<unknown>>();
 let cachedPromptPoolResponse: PromptPoolResponse | null = null;
 
 export function bootstrapW3KitsRuntime(runtime: RuntimeLike): Locale {
@@ -1811,26 +1814,62 @@ function readPathParam(pathname: string, prefix: string): string | undefined {
   return value ? decodeURIComponent(value) : undefined;
 }
 
-async function readJsonState<T>(runtime: RuntimeLike, key: string, path: string, fallback: T): Promise<T> {
-  if (isW3KitsRuntime(runtime)) {
-    const entry = await readW3KitsStorage(runtime, path);
-    if (entry?.body) {
-      try {
-        const parsed = JSON.parse(entry.body) as T;
-        runtime.localStorage.setItem(key, JSON.stringify(parsed));
-        return parsed;
-      } catch {
-        return fallback;
-      }
-    }
-  }
+function jsonStateCacheKey(path: string): string {
+  return path.replace(/^\/+/, "");
+}
 
+function readLocalJsonState<T>(runtime: RuntimeLike, key: string, fallback: T): T {
   const raw = runtime.localStorage.getItem(key);
   if (!raw) return fallback;
   try {
     return JSON.parse(raw) as T;
   } catch {
     return fallback;
+  }
+}
+
+async function loadJsonState<T>(runtime: RuntimeLike, key: string, path: string, fallback: T): Promise<T> {
+  const entry = await readW3KitsStorage(runtime, path);
+  if (entry?.body) {
+    try {
+      const parsed = JSON.parse(entry.body) as T;
+      runtime.localStorage.setItem(key, JSON.stringify(parsed));
+      return parsed;
+    } catch {
+      return fallback;
+    }
+  }
+  return readLocalJsonState(runtime, key, fallback);
+}
+
+async function readJsonState<T>(runtime: RuntimeLike, key: string, path: string, fallback: T): Promise<T> {
+  if (!isW3KitsRuntime(runtime)) {
+    return readLocalJsonState(runtime, key, fallback);
+  }
+
+  const cacheKey = jsonStateCacheKey(path);
+  const cached = jsonStateReadCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) {
+    return cached.value as T;
+  }
+  if (cached) {
+    jsonStateReadCache.delete(cacheKey);
+  }
+
+  const existing = jsonStateReadInflight.get(cacheKey);
+  if (existing) {
+    return existing as Promise<T>;
+  }
+
+  const load = loadJsonState(runtime, key, path, fallback);
+  jsonStateReadInflight.set(cacheKey, load);
+  try {
+    const value = await load;
+    jsonStateReadCache.set(cacheKey, { value, expiresAt: Date.now() + W3KITS_STATE_READ_CACHE_TTL_MS });
+    return value;
+  } finally {
+    jsonStateReadInflight.delete(cacheKey);
   }
 }
 
@@ -1843,6 +1882,8 @@ async function writeJsonState(
 ): Promise<void> {
   const text = JSON.stringify(value);
   runtime.localStorage.setItem(key, text);
+  jsonStateReadCache.set(jsonStateCacheKey(path), { value, expiresAt: Date.now() + W3KITS_STATE_READ_CACHE_TTL_MS });
+  jsonStateReadInflight.delete(jsonStateCacheKey(path));
   if (!isW3KitsRuntime(runtime)) {
     return;
   }
@@ -2395,6 +2436,8 @@ async function readStoredAssetRecord(runtime: RuntimeLike, assetId: string): Pro
 }
 
 async function deleteW3KitsStorage(runtime: RuntimeLike, path: string): Promise<void> {
+  jsonStateReadCache.delete(jsonStateCacheKey(path));
+  jsonStateReadInflight.delete(jsonStateCacheKey(path));
   const session = await getW3KitsRuntimeSession(runtime);
   const storage = w3kitsObjectStorage(session);
   const response = await runtime.fetch(w3kitsObjectUrl(runtime, storage, path, { formatJson: true }), {
