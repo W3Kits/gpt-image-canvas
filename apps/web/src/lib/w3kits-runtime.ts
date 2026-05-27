@@ -1923,17 +1923,18 @@ async function writeJsonState(
   options: { sync?: boolean } = {},
 ): Promise<void> {
   const text = JSON.stringify(value);
-  runtime.localStorage.setItem(key, text);
   writeStateCache(key, path, value);
   stateInflight.delete(stateCacheKey(key, path));
-  if (!isW3KitsRuntime(runtime)) {
+
+  if (isW3KitsRuntime(runtime)) {
+    await writeW3KitsStorage(runtime, path, text, "application/json;charset=UTF-8");
+    if (options.sync !== false) {
+      await syncW3KitsStorage(runtime).catch(() => undefined);
+    }
     return;
   }
 
-  await writeW3KitsStorage(runtime, path, text, "application/json;charset=UTF-8");
-  if (options.sync !== false) {
-    await syncW3KitsStorage(runtime).catch(() => undefined);
-  }
+  runtime.localStorage.setItem(key, text);
 }
 
 async function readJsonBody<T>(request: Request): Promise<T | undefined> {
