@@ -120,6 +120,11 @@ interface StorageReadResult {
   body?: string;
 }
 
+interface StorageBinaryReadResult {
+  body: Uint8Array;
+  contentType?: string;
+}
+
 interface W3KitsObjectFacadeStorage {
   type: "w3kits-vfs-object-facade";
   endpoint: string;
@@ -147,7 +152,10 @@ interface StoredAssetRecord {
   mimeType: string;
   width: number;
   height: number;
-  dataUrl: string;
+  dataUrl?: string;
+  bodyKey?: string;
+  bodyEncoding?: "base64";
+  size?: number;
   createdAt: string;
 }
 
@@ -170,8 +178,15 @@ const fallbackInstalledFlag = Symbol.for("gpt-image-canvas.w3kits-fallback-insta
 let cachedRuntimeSession: { value: W3KitsRuntimeSession; expiresAt: number } | null = null;
 let cachedPromptPoolResponse: PromptPoolResponse | null = null;
 const STATE_CACHE_TTL_MS = 1500;
+const ASSET_RECORD_CACHE_TTL_MS = 60 * 60 * 1000;
+const ASSET_BODY_DB_NAME = "gpt-image-canvas-assets";
+const ASSET_BODY_DB_VERSION = 1;
+const ASSET_BODY_STORE = "assetBodies";
+const ASSET_RECORD_STORE = "assetRecords";
 const stateCache = new Map<string, { value: unknown; expiresAt: number }>();
 const stateInflight = new Map<string, Promise<unknown>>();
+const assetRecordCache = new Map<string, { record: StoredAssetRecord; expiresAt: number }>();
+const assetBodyCache = new Map<string, { body: Uint8Array; expiresAt: number }>();
 
 function stateCacheKey(key: string, path: string): string {
   return `${key}:${path}`;
@@ -189,6 +204,156 @@ function readStateCache<T>(key: string, path: string): T | undefined {
 
 function writeStateCache(key: string, path: string, value: unknown): void {
   stateCache.set(stateCacheKey(key, path), { value, expiresAt: Date.now() + STATE_CACHE_TTL_MS });
+}
+
+function writeAssetRecordCache(record: StoredAssetRecord, body?: Uint8Array): void {
+  assetRecordCache.set(record.id, { record, expiresAt: Date.now() + ASSET_RECORD_CACHE_TTL_MS });
+  if (body) {
+    assetBodyCache.set(record.id, { body, expiresAt: Date.now() + ASSET_RECORD_CACHE_TTL_MS });
+  }
+}
+
+function readAssetRecordCache(assetId: string): StoredAssetRecord | null {
+  const entry = assetRecordCache.get(assetId);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    assetRecordCache.delete(assetId);
+    return null;
+  }
+  return entry.record;
+}
+
+function readAssetBodyCache(assetId: string): Uint8Array | null {
+  const entry = assetBodyCache.get(assetId);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    assetBodyCache.delete(assetId);
+    return null;
+  }
+  return entry.body;
+}
+
+function deleteAssetRecordCache(assetId: string): void {
+  assetRecordCache.delete(assetId);
+  assetBodyCache.delete(assetId);
+}
+
+function indexedDbAvailable(): boolean {
+  return typeof indexedDB !== "undefined";
+}
+
+async function openAssetBodyDb(): Promise<IDBDatabase | null> {
+  if (!indexedDbAvailable()) return null;
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(ASSET_BODY_DB_NAME, ASSET_BODY_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(ASSET_BODY_STORE)) db.createObjectStore(ASSET_BODY_STORE, { keyPath: "assetId" });
+      if (!db.objectStoreNames.contains(ASSET_RECORD_STORE)) db.createObjectStore(ASSET_RECORD_STORE, { keyPath: "id" });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("asset_body_db_open_failed"));
+    request.onblocked = () => reject(new Error("asset_body_db_open_blocked"));
+  });
+}
+
+async function writeAssetRecordL1(record: StoredAssetRecord): Promise<void> {
+  const db = await openAssetBodyDb();
+  if (!db) return;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(ASSET_RECORD_STORE, "readwrite");
+      transaction.objectStore(ASSET_RECORD_STORE).put(record);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error("asset_record_db_write_failed"));
+      transaction.onabort = () => reject(transaction.error || new Error("asset_record_db_write_aborted"));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function readAssetRecordL1(assetId: string): Promise<StoredAssetRecord | null> {
+  const db = await openAssetBodyDb();
+  if (!db) return null;
+  try {
+    return await new Promise<StoredAssetRecord | null>((resolve, reject) => {
+      const transaction = db.transaction(ASSET_RECORD_STORE, "readonly");
+      const request = transaction.objectStore(ASSET_RECORD_STORE).get(assetId) as IDBRequest<StoredAssetRecord | undefined>;
+      request.onsuccess = () => resolve(request.result ?? null);
+      request.onerror = () => reject(request.error || new Error("asset_record_db_read_failed"));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function deleteAssetRecordL1(assetId: string): Promise<void> {
+  const db = await openAssetBodyDb();
+  if (!db) return;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(ASSET_RECORD_STORE, "readwrite");
+      transaction.objectStore(ASSET_RECORD_STORE).delete(assetId);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error("asset_record_db_delete_failed"));
+      transaction.onabort = () => reject(transaction.error || new Error("asset_record_db_delete_aborted"));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function writeAssetBodyL1(assetId: string, body: Uint8Array, contentType: string): Promise<void> {
+  const db = await openAssetBodyDb();
+  if (!db) return;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(ASSET_BODY_STORE, "readwrite");
+      transaction.objectStore(ASSET_BODY_STORE).put({
+        assetId,
+        body: bytesToArrayBuffer(body),
+        contentType,
+        updatedAt: new Date().toISOString(),
+      });
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error("asset_body_db_write_failed"));
+      transaction.onabort = () => reject(transaction.error || new Error("asset_body_db_write_aborted"));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function readAssetBodyL1(assetId: string): Promise<Uint8Array | null> {
+  const db = await openAssetBodyDb();
+  if (!db) return null;
+  try {
+    return await new Promise<Uint8Array | null>((resolve, reject) => {
+      const transaction = db.transaction(ASSET_BODY_STORE, "readonly");
+      const request = transaction.objectStore(ASSET_BODY_STORE).get(assetId) as IDBRequest<{ body?: ArrayBuffer } | undefined>;
+      request.onsuccess = () => resolve(request.result?.body ? new Uint8Array(request.result.body) : null);
+      request.onerror = () => reject(request.error || new Error("asset_body_db_read_failed"));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function deleteAssetBodyL1(assetId: string): Promise<void> {
+  const db = await openAssetBodyDb();
+  if (!db) return;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(ASSET_BODY_STORE, "readwrite");
+      transaction.objectStore(ASSET_BODY_STORE).delete(assetId);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error("asset_body_db_delete_failed"));
+      transaction.onabort = () => reject(transaction.error || new Error("asset_body_db_delete_aborted"));
+    });
+  } finally {
+    db.close();
+  }
 }
 
 
@@ -591,7 +756,7 @@ export async function handleW3KitsApiRequest(request: Request, runtime: RuntimeL
       });
     }
 
-    const body = dataUrlToBytes(assetRecord.dataUrl);
+    const body = await readStoredAssetBody(runtime, assetRecord);
     const isDownload = url.pathname.endsWith("/download");
     return new Response(bytesToArrayBuffer(body), {
       status: 200,
@@ -1205,7 +1370,7 @@ async function buildGalleryArchiveResponse(
 
     files.push({
       name: assetRecord.fileName,
-      bytes: dataUrlToBytes(assetRecord.dataUrl)
+      bytes: await readStoredAssetBody(runtime, assetRecord)
     });
   }
 
@@ -2144,6 +2309,22 @@ async function readW3KitsStorage(runtime: RuntimeLike, path: string): Promise<St
   }
 }
 
+async function readW3KitsBinaryStorage(runtime: RuntimeLike, path: string): Promise<StorageBinaryReadResult | null> {
+  try {
+    const session = await getW3KitsRuntimeSession(runtime);
+    const storage = w3kitsObjectStorage(session);
+    const response = await runtime.fetch(w3kitsObjectUrl(runtime, storage, path), {
+      headers: w3kitsObjectHeaders(session)
+    });
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(await response.text().catch(() => "w3kits_storage_read_failed"));
+    return { body: new Uint8Array(await response.arrayBuffer()), contentType: response.headers.get("content-type") ?? undefined };
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
+  }
+}
+
 async function writeW3KitsStorage(runtime: RuntimeLike, path: string, body: string, contentType: string): Promise<void> {
   const session = await getW3KitsRuntimeSession(runtime);
   const storage = w3kitsObjectStorage(session);
@@ -2151,6 +2332,17 @@ async function writeW3KitsStorage(runtime: RuntimeLike, path: string, body: stri
     method: "PUT",
     headers: w3kitsObjectHeaders(session, contentType),
     body
+  });
+  if (!response.ok) throw new Error(await response.text().catch(() => "w3kits_storage_write_failed"));
+}
+
+async function writeW3KitsBinaryStorage(runtime: RuntimeLike, path: string, body: Uint8Array, contentType: string): Promise<void> {
+  const session = await getW3KitsRuntimeSession(runtime);
+  const storage = w3kitsObjectStorage(session);
+  const response = await runtime.fetch(w3kitsObjectUrl(runtime, storage, path, { formatJson: true }), {
+    method: "PUT",
+    headers: w3kitsObjectHeaders(session, contentType),
+    body: bytesToArrayBuffer(body)
   });
   if (!response.ok) throw new Error(await response.text().catch(() => "w3kits_storage_write_failed"));
 }
@@ -2225,6 +2417,7 @@ async function generateRecordViaW3Kits(
     response.images.map(async (image, index) => {
       const assetId = crypto.randomUUID();
       const fileName = `${assetId}.${outputFileExtension(requestBody.outputFormat)}`;
+      const body = base64ToBytes(image.b64Json);
       const dataUrl = `data:${mimeType};base64,${image.b64Json}`;
       const dimensions = await readImageDimensions(dataUrl);
       const asset: GeneratedAsset = {
@@ -2242,9 +2435,11 @@ async function generateRecordViaW3Kits(
         mimeType,
         width: dimensions.width,
         height: dimensions.height,
-        dataUrl,
+        bodyKey: assetBodyPath(assetId, requestBody.outputFormat),
+        bodyEncoding: "base64",
+        size: body.byteLength,
         createdAt
-      });
+      }, body);
 
       return {
         id: `${requestBody.clientRequestId ?? crypto.randomUUID()}-output-${index + 1}`,
@@ -2612,11 +2807,15 @@ function outputFileExtension(outputFormat: GenerateImageRequest["outputFormat"])
 }
 
 async function deleteStoredAssetRecord(runtime: RuntimeLike, assetId: string): Promise<void> {
+  deleteAssetRecordCache(assetId);
   if (isW3KitsRuntime(runtime)) {
     await deleteW3KitsStorage(runtime, assetRecordPath(assetId)).catch(() => undefined);
     await syncW3KitsStorage(runtime).catch(() => undefined);
   }
+  await deleteAssetBodyL1(assetId).catch(() => undefined);
+  await deleteAssetRecordL1(assetId).catch(() => undefined);
   runtime.localStorage.removeItem(`gpt-image-canvas.asset.${assetId}`);
+  runtime.localStorage.removeItem(`gpt-image-canvas.asset-body.${assetId}`);
 }
 
 async function readImageDimensions(dataUrl: string): Promise<{ width: number; height: number }> {
@@ -2678,12 +2877,66 @@ function assetRecordPath(assetId: string): string {
   return `${W3KITS_ASSET_DIR}/${assetId}.json`;
 }
 
-async function writeStoredAssetRecord(runtime: RuntimeLike, record: StoredAssetRecord): Promise<void> {
-  await writeJsonState(runtime, `gpt-image-canvas.asset.${record.id}`, assetRecordPath(record.id), record);
+function assetBodyPath(assetId: string, outputFormat: GenerateImageRequest["outputFormat"]): string {
+  return `${W3KITS_ASSET_DIR}/${assetId}.${outputFileExtension(outputFormat)}`;
+}
+
+async function writeStoredAssetBody(runtime: RuntimeLike, record: StoredAssetRecord, body: Uint8Array): Promise<void> {
+  await writeAssetBodyL1(record.id, body, record.mimeType).catch(() => undefined);
+  if (isW3KitsRuntime(runtime)) {
+    void writeW3KitsBinaryStorage(runtime, record.bodyKey || assetBodyPath(record.id, "png"), body, record.mimeType).catch(() => undefined);
+    return;
+  }
+
+  runtime.localStorage.setItem("gpt-image-canvas.asset-body." + record.id, bytesToBase64(body));
+}
+
+async function writeStoredAssetRecord(runtime: RuntimeLike, record: StoredAssetRecord, body?: Uint8Array): Promise<void> {
+  writeAssetRecordCache(record, body);
+  await writeAssetRecordL1(record).catch(() => undefined);
+  if (body) {
+    await writeStoredAssetBody(runtime, record, body).catch(() => undefined);
+  }
+  if (isW3KitsRuntime(runtime)) {
+    void writeJsonState(runtime, "gpt-image-canvas.asset." + record.id, assetRecordPath(record.id), record, { sync: false })
+      .catch(() => undefined);
+    return;
+  }
+
+  await writeJsonState(runtime, "gpt-image-canvas.asset." + record.id, assetRecordPath(record.id), record);
 }
 
 async function readStoredAssetRecord(runtime: RuntimeLike, assetId: string): Promise<StoredAssetRecord | null> {
-  return readJsonState<StoredAssetRecord | null>(runtime, `gpt-image-canvas.asset.${assetId}`, assetRecordPath(assetId), null);
+  return readAssetRecordCache(assetId) ?? await readAssetRecordL1(assetId).catch(() => null) ?? readJsonState<StoredAssetRecord | null>(runtime, "gpt-image-canvas.asset." + assetId, assetRecordPath(assetId), null);
+}
+
+async function readStoredAssetBody(runtime: RuntimeLike, record: StoredAssetRecord): Promise<Uint8Array> {
+  const cached = readAssetBodyCache(record.id);
+  if (cached) return cached;
+  if (record.dataUrl) return dataUrlToBytes(record.dataUrl);
+
+  const localBody = await readAssetBodyL1(record.id).catch(() => null);
+  if (localBody) {
+    writeAssetRecordCache(record, localBody);
+    return localBody;
+  }
+
+  if (isW3KitsRuntime(runtime) && record.bodyKey) {
+    const entry = await readW3KitsBinaryStorage(runtime, record.bodyKey);
+    if (entry?.body) {
+      writeAssetRecordCache(record, entry.body);
+      return entry.body;
+    }
+  }
+
+  const localStorageBody = runtime.localStorage.getItem("gpt-image-canvas.asset-body." + record.id);
+  if (localStorageBody) {
+    const body = base64ToBytes(localStorageBody);
+    writeAssetRecordCache(record, body);
+    return body;
+  }
+
+  throw new Error("Stored asset body is unavailable.");
 }
 
 async function deleteW3KitsStorage(runtime: RuntimeLike, path: string): Promise<void> {
