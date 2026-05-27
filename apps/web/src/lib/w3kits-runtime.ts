@@ -2291,17 +2291,87 @@ async function normalizeOpenAiImageResponse(runtime: RuntimeLike, payload: unkno
 }
 
 async function imageFromOpenAiResponseItem(runtime: RuntimeLike, item: Record<string, unknown>): Promise<{ b64Json: string } | null> {
-  const b64Json = readStringValue(item.b64_json) || readStringValue(item.b64Json);
+  const b64Json = readOpenAiImageBase64(item);
   if (b64Json) {
     return { b64Json };
   }
 
-  const url = readStringValue(item.url);
+  const url = readOpenAiImageUrl(item);
   if (!url) {
     return null;
   }
 
   return { b64Json: await downloadOpenAiImageUrl(runtime, url) };
+}
+
+function readOpenAiImageBase64(value: unknown, depth = 0): string | undefined {
+  if (depth > 4 || value == null) return undefined;
+  if (typeof value === "string") {
+    if (value.startsWith("data:image/")) return imageDataUrlToBase64(value);
+    return isLikelyBase64Image(value) ? value : undefined;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = readOpenAiImageBase64(item, depth + 1);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if (!isRecord(value)) return undefined;
+
+  for (const key of ["b64_json", "b64Json", "base64", "image_base64", "imageBase64", "data"]) {
+    const raw = readStringValue(value[key]);
+    if (raw?.startsWith("data:image/")) return imageDataUrlToBase64(raw);
+    if (raw && isLikelyBase64Image(raw)) return raw;
+  }
+
+  for (const key of ["image", "image_url", "imageUrl", "content", "output", "result", "results"]) {
+    const found = readOpenAiImageBase64(value[key], depth + 1);
+    if (found) return found;
+  }
+
+  return undefined;
+}
+
+function readOpenAiImageUrl(value: unknown, depth = 0): string | undefined {
+  if (depth > 4 || value == null) return undefined;
+  if (typeof value === "string") {
+    return isOpenAiDownloadableImageUrl(value) ? value : undefined;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = readOpenAiImageUrl(item, depth + 1);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if (!isRecord(value)) return undefined;
+
+  for (const key of ["url", "image_url", "imageUrl", "src"]) {
+    const raw = readStringValue(value[key]);
+    if (raw && isOpenAiDownloadableImageUrl(raw)) return raw;
+  }
+
+  for (const key of ["image", "content", "output", "result", "results"]) {
+    const found = readOpenAiImageUrl(value[key], depth + 1);
+    if (found) return found;
+  }
+
+  return undefined;
+}
+
+function isLikelyBase64Image(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith("data:image/")) return false;
+  if (/^https?:\/\//iu.test(trimmed)) return false;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(trimmed) || trimmed.length < 32) return false;
+  return true;
+}
+
+function isOpenAiDownloadableImageUrl(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.startsWith("data:image/") || Boolean(parseOpenAiImageUrl(trimmed));
 }
 
 async function downloadOpenAiImageUrl(runtime: RuntimeLike, url: string): Promise<string> {

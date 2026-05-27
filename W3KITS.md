@@ -15,6 +15,7 @@
 - starts the packaged daemon only for local/runtime support that still needs WebContainer
 - handles W3Kits-owned runtime API routes, including image generation and project/gallery state, in the browser runtime adapter before they reach the WebContainer daemon origin
 - routes OpenAI-compatible requests through core with W3Kits runtime-session headers instead of doing daemon-side AI forwarding
+- accepts nested OpenAI-compatible image response fields when core returns URLs or provider-specific image objects
 - persists WebContainer daemon state through `/home/agent/.config/gpt-image-canvas`
 - keeps the upstream standalone API app out of the WebContainer package because native `better-sqlite3` and `sharp` still block direct boot there
 - verifies the W3Kits package shape before publish

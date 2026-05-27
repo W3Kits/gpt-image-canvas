@@ -1,6 +1,6 @@
 {
   "name": "@w3kits/plugin-gpt-image-canvas",
-  "version": "0.5.12",
+  "version": "0.5.13",
   "private": false,
   "license": "MIT",
   "packageManager": "pnpm@9.14.2",
