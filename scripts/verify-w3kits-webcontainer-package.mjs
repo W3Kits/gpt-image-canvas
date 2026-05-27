@@ -75,7 +75,7 @@ assert(runtimePackage.dependencies?.["@gpt-image-canvas/shared"] === "file:./wor
 
 for (const requiredPath of [
   "index.html",
-  "__w3kits/icon.svg",
+  "__w3kits/icon.png",
   "__w3kits/prompt-pool/prompts-all.json",
   "__w3kits/prompt-pool/summary.json",
   "browser-daemon.js",

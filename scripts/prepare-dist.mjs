@@ -7,9 +7,9 @@ const webDist = path.join(root, "apps", "web", "dist");
 const dist = path.join(root, "dist");
 const webcontainerBuild = path.join(root, ".generated", "webcontainer-runtime");
 const indexHtml = path.join(webDist, "index.html");
-const iconSource = path.join(root, "assets", "w3kits-icon.svg");
+const iconSource = path.join(root, "apps", "web", "public", "brand-logo.png");
 const w3kitsDir = path.join(dist, "__w3kits");
-const iconTarget = path.join(w3kitsDir, "icon.svg");
+const iconTarget = path.join(w3kitsDir, "icon.png");
 const runtimeRoot = path.join(w3kitsDir, "webcontainer-runtime");
 const promptPoolSourceDir = path.join(root, "prompt-pool-data");
 const promptPoolTargetDir = path.join(w3kitsDir, "prompt-pool");
@@ -25,7 +25,7 @@ if (!fs.existsSync(indexHtml)) {
 }
 
 if (!fs.existsSync(iconSource)) {
-  throw new Error("Missing W3Kits icon source: assets/w3kits-icon.svg");
+  throw new Error("Missing upstream GPT Image Canvas icon source: apps/web/public/brand-logo.png");
 }
 
 if (!fs.existsSync(browserDaemonSource)) {

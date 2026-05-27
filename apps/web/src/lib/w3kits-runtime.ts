@@ -169,6 +169,28 @@ interface BuiltInAgentSkillDefinition {
 const fallbackInstalledFlag = Symbol.for("gpt-image-canvas.w3kits-fallback-installed");
 let cachedRuntimeSession: { value: W3KitsRuntimeSession; expiresAt: number } | null = null;
 let cachedPromptPoolResponse: PromptPoolResponse | null = null;
+const STATE_CACHE_TTL_MS = 1500;
+const stateCache = new Map<string, { value: unknown; expiresAt: number }>();
+const stateInflight = new Map<string, Promise<unknown>>();
+
+function stateCacheKey(key: string, path: string): string {
+  return `${key}:${path}`;
+}
+
+function readStateCache<T>(key: string, path: string): T | undefined {
+  const entry = stateCache.get(stateCacheKey(key, path));
+  if (!entry) return undefined;
+  if (entry.expiresAt <= Date.now()) {
+    stateCache.delete(stateCacheKey(key, path));
+    return undefined;
+  }
+  return entry.value as T;
+}
+
+function writeStateCache(key: string, path: string, value: unknown): void {
+  stateCache.set(stateCacheKey(key, path), { value, expiresAt: Date.now() + STATE_CACHE_TTL_MS });
+}
+
 
 export function bootstrapW3KitsRuntime(runtime: RuntimeLike): Locale {
   const locale = bootstrapLocale(runtime);
@@ -243,7 +265,6 @@ export async function handleW3KitsApiRequest(request: Request, runtime: RuntimeL
     return undefined;
   }
 
-  const state = await readState(runtime);
   const method = request.method.toUpperCase();
   const generationId = readPathParam(url.pathname, "/api/generations/");
   const galleryOutputId = readPathParam(url.pathname, "/api/gallery/");
@@ -254,7 +275,28 @@ export async function handleW3KitsApiRequest(request: Request, runtime: RuntimeL
     case "GET /api/config":
       return jsonResponse(buildAppConfig());
     case "GET /api/project":
-      return jsonResponse(state.project);
+      return jsonResponse(await readProjectState(runtime));
+    case "GET /api/provider-config":
+      return jsonResponse(await readProviderConfigState(runtime));
+    case "GET /api/storage/config":
+      return jsonResponse(await readStorageConfigState(runtime));
+    case "GET /api/agent-config":
+      return jsonResponse(await readAgentConfigState(runtime));
+    case "GET /api/auth/status":
+      return jsonResponse(await readAuthStatusState(runtime));
+    case "GET /api/pool":
+      return jsonResponse(await loadPromptPoolResponse(runtime));
+    default:
+      break;
+  }
+
+  const state = await readState(runtime);
+
+  switch (`${method} ${url.pathname}`) {
+    case "GET /api/health":
+      return jsonResponse({ status: "ok", runtime: "w3kits-cache" });
+    case "GET /api/config":
+      return jsonResponse(buildAppConfig());
     case "PUT /api/project": {
       const body = await readJsonBody<{ name?: string; snapshot?: unknown }>(request);
       if (!body || !Object.hasOwn(body, "snapshot")) {
@@ -265,8 +307,6 @@ export async function handleW3KitsApiRequest(request: Request, runtime: RuntimeL
       await writeJsonState(runtime, W3KITS_PROJECT_KEY, W3KITS_PROJECT_PATH, nextProject);
       return jsonResponse(nextProject);
     }
-    case "GET /api/provider-config":
-      return jsonResponse(state.providerConfig);
     case "PUT /api/provider-config": {
       const body = await readJsonBody<SaveProviderConfigRequest>(request);
       if (!body) {
@@ -279,8 +319,6 @@ export async function handleW3KitsApiRequest(request: Request, runtime: RuntimeL
       await writeJsonState(runtime, W3KITS_AUTH_STATUS_KEY, W3KITS_AUTH_STATUS_PATH, nextAuthStatus, { sync: false });
       return jsonResponse(nextProviderConfig);
     }
-    case "GET /api/storage/config":
-      return jsonResponse(state.storageConfig);
     case "PUT /api/storage/config": {
       const body = await readJsonBody<SaveStorageConfigRequest>(request);
       if (!body) {
@@ -293,8 +331,6 @@ export async function handleW3KitsApiRequest(request: Request, runtime: RuntimeL
     }
     case "POST /api/storage/config/test":
       return jsonResponse({ ok: true, message: "Plugin cache storage is available." } satisfies StorageTestResult);
-    case "GET /api/agent-config":
-      return jsonResponse(state.agentConfig);
     case "PUT /api/agent-config": {
       const body = await readJsonBody<SaveAgentLlmConfigRequest>(request);
       if (!body) {
@@ -307,8 +343,6 @@ export async function handleW3KitsApiRequest(request: Request, runtime: RuntimeL
       await writeJsonState(runtime, W3KITS_AUTH_STATUS_KEY, W3KITS_AUTH_STATUS_PATH, nextAuthStatus, { sync: false });
       return jsonResponse(nextAgentConfig);
     }
-    case "GET /api/auth/status":
-      return jsonResponse(state.authStatus);
     case "POST /api/auth/codex/logout": {
       const nextAuth = buildAuthStatus(state.providerConfig, state.agentConfig);
       await writeJsonState(runtime, W3KITS_AUTH_STATUS_KEY, W3KITS_AUTH_STATUS_PATH, nextAuth, { sync: false });
@@ -636,14 +670,36 @@ function isKnownW3KitsRuntimeApiPath(path: string): boolean {
   return knownW3KitsRuntimeApiPaths().has(path) || knownW3KitsRuntimeApiPrefixes().some(isKnownFallbackPrefix);
 }
 
-async function readState(runtime: RuntimeLike): Promise<W3KitsRuntimeState> {
-  const project = await readJsonState(runtime, W3KITS_PROJECT_KEY, W3KITS_PROJECT_PATH, defaultProjectState());
-  const providerConfig = normalizeRuntimeProviderConfig(
+async function readProjectState(runtime: RuntimeLike): Promise<ProjectState> {
+  return readJsonState(runtime, W3KITS_PROJECT_KEY, W3KITS_PROJECT_PATH, defaultProjectState());
+}
+
+async function readProviderConfigState(runtime: RuntimeLike): Promise<ProviderConfigResponse> {
+  return normalizeRuntimeProviderConfig(
     await readJsonState(runtime, W3KITS_PROVIDER_CONFIG_KEY, W3KITS_PROVIDER_CONFIG_PATH, defaultProviderConfig(runtime)),
     runtime
   );
-  const storageConfig = await readJsonState(runtime, W3KITS_STORAGE_CONFIG_KEY, W3KITS_STORAGE_CONFIG_PATH, defaultStorageConfig());
-  const agentConfig = await readJsonState(runtime, W3KITS_AGENT_CONFIG_KEY, W3KITS_AGENT_CONFIG_PATH, defaultAgentConfig());
+}
+
+async function readStorageConfigState(runtime: RuntimeLike): Promise<StorageConfigResponse> {
+  return readJsonState(runtime, W3KITS_STORAGE_CONFIG_KEY, W3KITS_STORAGE_CONFIG_PATH, defaultStorageConfig());
+}
+
+async function readAgentConfigState(runtime: RuntimeLike): Promise<AgentLlmConfigView> {
+  return readJsonState(runtime, W3KITS_AGENT_CONFIG_KEY, W3KITS_AGENT_CONFIG_PATH, defaultAgentConfig());
+}
+
+async function readAuthStatusState(runtime: RuntimeLike): Promise<AuthStatusResponse> {
+  const providerConfig = await readProviderConfigState(runtime);
+  const agentConfig = await readAgentConfigState(runtime);
+  return readJsonState(runtime, W3KITS_AUTH_STATUS_KEY, W3KITS_AUTH_STATUS_PATH, buildAuthStatus(providerConfig, agentConfig));
+}
+
+async function readState(runtime: RuntimeLike): Promise<W3KitsRuntimeState> {
+  const project = await readProjectState(runtime);
+  const providerConfig = await readProviderConfigState(runtime);
+  const storageConfig = await readStorageConfigState(runtime);
+  const agentConfig = await readAgentConfigState(runtime);
   const authStatus = await readJsonState(
     runtime,
     W3KITS_AUTH_STATUS_KEY,
@@ -1813,25 +1869,49 @@ function readPathParam(pathname: string, prefix: string): string | undefined {
 }
 
 async function readJsonState<T>(runtime: RuntimeLike, key: string, path: string, fallback: T): Promise<T> {
-  if (isW3KitsRuntime(runtime)) {
-    const entry = await readW3KitsStorage(runtime, path);
-    if (entry?.body) {
-      try {
-        const parsed = JSON.parse(entry.body) as T;
-        runtime.localStorage.setItem(key, JSON.stringify(parsed));
-        return parsed;
-      } catch {
-        return fallback;
+  const cached = readStateCache<T>(key, path);
+  if (cached !== undefined) return cached;
+
+  const cacheKey = stateCacheKey(key, path);
+  const existing = stateInflight.get(cacheKey);
+  if (existing) return existing as Promise<T>;
+
+  const load = (async () => {
+    if (isW3KitsRuntime(runtime)) {
+      const entry = await readW3KitsStorage(runtime, path);
+      if (entry?.body) {
+        try {
+          const parsed = JSON.parse(entry.body) as T;
+          runtime.localStorage.setItem(key, JSON.stringify(parsed));
+          writeStateCache(key, path, parsed);
+          return parsed;
+        } catch {
+          writeStateCache(key, path, fallback);
+          return fallback;
+        }
       }
     }
-  }
 
-  const raw = runtime.localStorage.getItem(key);
-  if (!raw) return fallback;
+    const raw = runtime.localStorage.getItem(key);
+    if (!raw) {
+      writeStateCache(key, path, fallback);
+      return fallback;
+    }
+    try {
+      const parsed = JSON.parse(raw) as T;
+      writeStateCache(key, path, parsed);
+      return parsed;
+    } catch {
+      writeStateCache(key, path, fallback);
+      return fallback;
+    }
+  })();
+
+  stateInflight.set(cacheKey, load);
   try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
+    return await load;
+  } finally {
+    stateInflight.delete(cacheKey);
   }
 }
 
@@ -1844,6 +1924,8 @@ async function writeJsonState(
 ): Promise<void> {
   const text = JSON.stringify(value);
   runtime.localStorage.setItem(key, text);
+  writeStateCache(key, path, value);
+  stateInflight.delete(stateCacheKey(key, path));
   if (!isW3KitsRuntime(runtime)) {
     return;
   }
@@ -2322,7 +2404,7 @@ function readOpenAiImageBase64(value: unknown, depth = 0): string | undefined {
   for (const key of ["b64_json", "b64Json", "base64", "image_base64", "imageBase64", "data"]) {
     const raw = readStringValue(value[key]);
     if (raw?.startsWith("data:image/")) return imageDataUrlToBase64(raw);
-    if (raw && isLikelyBase64Image(raw)) return raw;
+    if (raw && isLikelyOpenAiBase64Payload(raw)) return raw.trim();
   }
 
   for (const key of ["image", "image_url", "imageUrl", "content", "output", "result", "results"]) {
@@ -2362,11 +2444,17 @@ function readOpenAiImageUrl(value: unknown, depth = 0): string | undefined {
 
 function isLikelyBase64Image(value: string): boolean {
   const trimmed = value.trim();
+  if (!isLikelyOpenAiBase64Payload(trimmed)) return false;
+  return trimmed.length >= 32;
+}
+
+function isLikelyOpenAiBase64Payload(value: string): boolean {
+  const trimmed = value.trim();
   if (!trimmed) return false;
   if (trimmed.startsWith("data:image/")) return false;
   if (/^https?:\/\//iu.test(trimmed)) return false;
-  if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(trimmed) || trimmed.length < 32) return false;
-  return true;
+  if (trimmed.length < 8 || trimmed.length % 4 !== 0) return false;
+  return /^[A-Za-z0-9+/]+={0,2}$/u.test(trimmed);
 }
 
 function isOpenAiDownloadableImageUrl(value: string): boolean {
@@ -2425,7 +2513,7 @@ function imageDataUrlToBase64(url: string): string {
     throw new Error("OpenAI image response included an unsupported data URL.");
   }
 
-  return match[1];
+  return match[1] ?? "";
 }
 
 function isOpenAiImageContentType(value: string | null): boolean {
@@ -2549,7 +2637,9 @@ function dataUrlToFile(dataUrl: string, fileName: string): File {
     throw new Error("Reference image data URL is invalid.");
   }
 
-  return new File([bytesToArrayBuffer(base64ToBytes(match[2]))], fileName, { type: match[1] });
+  const mimeType = match[1] ?? "application/octet-stream";
+  const body = match[2] ?? "";
+  return new File([bytesToArrayBuffer(base64ToBytes(body))], fileName, { type: mimeType });
 }
 
 function dataUrlToBytes(dataUrl: string): Uint8Array {
@@ -2558,7 +2648,7 @@ function dataUrlToBytes(dataUrl: string): Uint8Array {
     throw new Error("Stored asset data URL is invalid.");
   }
 
-  return base64ToBytes(match[2]);
+  return base64ToBytes(match[2] ?? "");
 }
 
 function base64ToBytes(value: string): Uint8Array {
@@ -2699,7 +2789,7 @@ function buildCrc32Table(): Uint32Array {
 function crc32(bytes: Uint8Array): number {
   let value = 0xffffffff;
   for (const byte of bytes) {
-    value = CRC32_TABLE[(value ^ byte) & 0xff] ^ (value >>> 8);
+    value = (CRC32_TABLE[(value ^ byte) & 0xff] ?? 0) ^ (value >>> 8);
   }
   return (value ^ 0xffffffff) >>> 0;
 }
